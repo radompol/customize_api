@@ -1,6 +1,6 @@
 import { getDbInitError, getDbSafely } from "@/lib/db";
 import { apiError, apiSuccess } from "@/lib/api";
-import { aggregateInstitutionReadiness } from "@/lib/readinessEngine";
+import { aggregateInstitutionReadiness, toLightweightRecord, type LightweightRecord } from "@/lib/readinessEngine";
 
 export const runtime = "nodejs";
 
@@ -11,29 +11,15 @@ export async function GET() {
   }
 
   const records = await db.requirementRecord.findMany();
-  const summary = aggregateInstitutionReadiness(
-    records.map((record) => ({
-      program: record.program,
-      areaId: record.areaId,
-      areaCode: record.areaCode,
-      areaDescription: record.areaDescription,
-      assignedStatus: record.assignedStatus,
-      latestFileStatus: record.latestFileStatus,
-      hasFile: record.hasFile,
-      reviseCount: record.reviseCount,
-      nonEmptyComments: record.nonEmptyComments,
-      daysSinceAssignment: record.daysSinceAssignment,
-      daysOverdue: record.daysOverdue,
-      isPendingFlag: record.isPendingFlag
-    }))
-  );
+  const normalized: LightweightRecord[] = records.map(toLightweightRecord);
+  const summary = aggregateInstitutionReadiness(normalized);
 
   return apiSuccess({
     data: {
       overallReadinessScore: summary.readinessScore,
       readinessLabel: summary.readinessLabel,
       riskLevel: summary.riskLevel,
-      totalPrograms: new Set(records.map((record) => record.program)).size,
+      totalPrograms: new Set(normalized.map((record) => record.program)).size,
       totalRequirements: summary.totalRequirements,
       completedRequirements: summary.completedRequirements,
       pendingRequirements: summary.pendingRequirements,

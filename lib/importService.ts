@@ -1,26 +1,19 @@
 import { getDb } from "@/lib/db";
 import { parseCsvFile } from "@/lib/csvParser";
 import { parseXlsxFile } from "@/lib/xlsxParser";
-import { aggregateAreaReadiness, aggregateInstitutionReadiness, aggregateProgramReadiness } from "@/lib/readinessEngine";
+import {
+  aggregateAreaReadiness,
+  aggregateInstitutionReadiness,
+  aggregateProgramReadiness,
+  toLightweightRecord,
+  type LightweightRecord
+} from "@/lib/readinessEngine";
 
 async function createSnapshotsFromBatch(batchId: number) {
   const db = getDb();
   const records = await db.requirementRecord.findMany({ where: { importBatchId: batchId } });
 
-  const normalized = records.map((record) => ({
-    program: record.program,
-    areaId: record.areaId,
-    areaCode: record.areaCode,
-    areaDescription: record.areaDescription,
-    assignedStatus: record.assignedStatus,
-    latestFileStatus: record.latestFileStatus,
-    hasFile: record.hasFile,
-    reviseCount: record.reviseCount,
-    nonEmptyComments: record.nonEmptyComments,
-    daysSinceAssignment: record.daysSinceAssignment,
-    daysOverdue: record.daysOverdue,
-    isPendingFlag: record.isPendingFlag
-  }));
+  const normalized: LightweightRecord[] = records.map(toLightweightRecord);
 
   const snapshotDate = new Date();
   let createdCount = 0;
@@ -43,7 +36,7 @@ async function createSnapshotsFromBatch(batchId: number) {
   });
   createdCount += 1;
 
-  for (const program of Array.from(new Set(records.map((record) => record.program)))) {
+  for (const program of Array.from(new Set(normalized.map((record) => record.program)))) {
     const metrics = aggregateProgramReadiness(normalized.filter((record) => record.program === program));
     await db.readinessSnapshot.create({
       data: {

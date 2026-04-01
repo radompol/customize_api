@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { mapRawRowToRequirementRecord, normalizeHeaders, validateRequiredColumns } from "@/lib/validators";
-import type { ParsedImportResult, RawDatasetRow } from "@/models/dataset.types";
+import type { ParsedImportResult, RawDatasetRow, RequirementRecordInput } from "@/models/dataset.types";
 
 export function parseXlsxFile(buffer: ArrayBuffer): ParsedImportResult {
   const workbook = XLSX.read(buffer, { type: "array" });
@@ -22,7 +22,7 @@ export function parseXlsxFile(buffer: ArrayBuffer): ParsedImportResult {
     };
   }
 
-  const validRows = [];
+  const validRows: RequirementRecordInput[] = [];
   const errors: string[] = [];
 
   rows.forEach((row, index) => {

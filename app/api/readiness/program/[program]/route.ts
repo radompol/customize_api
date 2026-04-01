@@ -1,6 +1,6 @@
 import { getDbInitError, getDbSafely } from "@/lib/db";
 import { apiError, apiSuccess } from "@/lib/api";
-import { aggregateAreaReadiness, aggregateProgramReadiness } from "@/lib/readinessEngine";
+import { aggregateAreaReadiness, aggregateProgramReadiness, toLightweightRecord } from "@/lib/readinessEngine";
 
 export const runtime = "nodejs";
 
@@ -17,20 +17,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
     where: { program: decodedProgram }
   });
 
-  const normalized = records.map((record) => ({
-    program: record.program,
-    areaId: record.areaId,
-    areaCode: record.areaCode,
-    areaDescription: record.areaDescription,
-    assignedStatus: record.assignedStatus,
-    latestFileStatus: record.latestFileStatus,
-    hasFile: record.hasFile,
-    reviseCount: record.reviseCount,
-    nonEmptyComments: record.nonEmptyComments,
-    daysSinceAssignment: record.daysSinceAssignment,
-    daysOverdue: record.daysOverdue,
-    isPendingFlag: record.isPendingFlag
-  }));
+  const normalized = records.map(toLightweightRecord);
 
   const summary = aggregateProgramReadiness(normalized);
   const areas = aggregateAreaReadiness(normalized);

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { DashboardView } from "@/components/dashboard/DashboardView";
 import { getDbInitError, getDbSafely } from "@/lib/db";
 
@@ -59,7 +60,20 @@ export default async function DashboardPage() {
           </aside>
         </div>
       </section>
-      <DashboardView programs={programs.map((entry) => entry.program)} dbMessage={dbMessage} />
+      <Suspense
+        fallback={
+          <div className="panel section">
+            <div className="section-title">
+              <div className="surface-copy">
+                <h3>Loading dashboard</h3>
+                <span className="table-title">Preparing readiness filters and charts.</span>
+              </div>
+            </div>
+          </div>
+        }
+      >
+        <DashboardView programs={programs.map((entry) => entry.program)} dbMessage={dbMessage} />
+      </Suspense>
     </main>
   );
 }

@@ -1,6 +1,6 @@
 import { getDbInitError, getDbSafely } from "@/lib/db";
 import { apiError, apiSuccess } from "@/lib/api";
-import { aggregateAreaReadiness } from "@/lib/readinessEngine";
+import { aggregateAreaReadiness, toLightweightRecord } from "@/lib/readinessEngine";
 
 export const runtime = "nodejs";
 
@@ -17,22 +17,7 @@ export async function GET(request: Request) {
     where: program ? { program } : undefined
   });
 
-  const areas = aggregateAreaReadiness(
-    records.map((record) => ({
-      program: record.program,
-      areaId: record.areaId,
-      areaCode: record.areaCode,
-      areaDescription: record.areaDescription,
-      assignedStatus: record.assignedStatus,
-      latestFileStatus: record.latestFileStatus,
-      hasFile: record.hasFile,
-      reviseCount: record.reviseCount,
-      nonEmptyComments: record.nonEmptyComments,
-      daysSinceAssignment: record.daysSinceAssignment,
-      daysOverdue: record.daysOverdue,
-      isPendingFlag: record.isPendingFlag
-    }))
-  );
+  const areas = aggregateAreaReadiness(records.map(toLightweightRecord));
 
   return apiSuccess({
     data: areas.sort((left, right) => left.readinessScore - right.readinessScore)

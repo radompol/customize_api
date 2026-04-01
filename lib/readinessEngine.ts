@@ -2,7 +2,7 @@ import { SCORE_WEIGHTS, STATUS_CONFIG } from "@/lib/constants";
 import { resolvePriorityLevel, resolveReadinessLabel, resolveRiskLevel } from "@/lib/riskRules";
 import type { ReadinessAreaRow, ReadinessMetrics } from "@/models/readiness.types";
 
-type LightweightRecord = {
+export type LightweightRecord = {
   program: string;
   areaId: string | null;
   areaCode: string | null;
@@ -16,6 +16,23 @@ type LightweightRecord = {
   daysOverdue?: number | null;
   isPendingFlag: boolean;
 };
+
+export function toLightweightRecord<T extends LightweightRecord>(record: T): LightweightRecord {
+  return {
+    program: record.program,
+    areaId: record.areaId,
+    areaCode: record.areaCode,
+    areaDescription: record.areaDescription,
+    assignedStatus: record.assignedStatus,
+    latestFileStatus: record.latestFileStatus,
+    hasFile: record.hasFile,
+    reviseCount: record.reviseCount,
+    nonEmptyComments: record.nonEmptyComments,
+    daysSinceAssignment: record.daysSinceAssignment,
+    daysOverdue: record.daysOverdue,
+    isPendingFlag: record.isPendingFlag
+  };
+}
 
 function clamp(value: number) {
   return Math.max(0, Math.min(1, value));

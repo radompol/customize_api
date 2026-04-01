@@ -2,26 +2,15 @@ import { getDb } from "../lib/db";
 import {
   aggregateAreaReadiness,
   aggregateInstitutionReadiness,
-  aggregateProgramReadiness
+  aggregateProgramReadiness,
+  toLightweightRecord,
+  type LightweightRecord
 } from "../lib/readinessEngine";
 
 async function main() {
   const db = getDb();
   const records = await db.requirementRecord.findMany();
-  const normalized = records.map((record) => ({
-    program: record.program,
-    areaId: record.areaId,
-    areaCode: record.areaCode,
-    areaDescription: record.areaDescription,
-    assignedStatus: record.assignedStatus,
-    latestFileStatus: record.latestFileStatus,
-    hasFile: record.hasFile,
-    reviseCount: record.reviseCount,
-    nonEmptyComments: record.nonEmptyComments,
-    daysSinceAssignment: record.daysSinceAssignment,
-    daysOverdue: record.daysOverdue,
-    isPendingFlag: record.isPendingFlag
-  }));
+  const normalized: LightweightRecord[] = records.map(toLightweightRecord);
 
   const now = new Date();
   const institution = aggregateInstitutionReadiness(normalized);
@@ -40,7 +29,7 @@ async function main() {
     }
   });
 
-  for (const program of Array.from(new Set(records.map((record) => record.program)))) {
+  for (const program of Array.from(new Set(normalized.map((record) => record.program)))) {
     const programRows = normalized.filter((record) => record.program === program);
     const metrics = aggregateProgramReadiness(programRows);
     await db.readinessSnapshot.create({

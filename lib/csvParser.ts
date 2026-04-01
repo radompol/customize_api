@@ -1,6 +1,6 @@
 import Papa from "papaparse";
 import { mapRawRowToRequirementRecord, normalizeHeaders, validateRequiredColumns } from "@/lib/validators";
-import type { ParsedImportResult, RawDatasetRow } from "@/models/dataset.types";
+import type { ParsedImportResult, RawDatasetRow, RequirementRecordInput } from "@/models/dataset.types";
 
 export function parseCsvFile(contents: string): ParsedImportResult {
   const parsed = Papa.parse<RawDatasetRow>(contents, { header: true, skipEmptyLines: true });
@@ -15,7 +15,7 @@ export function parseCsvFile(contents: string): ParsedImportResult {
     };
   }
 
-  const validRows = [];
+  const validRows: RequirementRecordInput[] = [];
   const errors: string[] = [];
 
   parsed.data.forEach((row, index) => {
