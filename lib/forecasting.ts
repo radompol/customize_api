@@ -5,7 +5,7 @@ import { resolveRiskLevel } from "@/lib/riskRules";
 import { minMaxScale } from "@/lib/scaler";
 import type { ForecastPoint, ForecastResult } from "@/models/forecast.types";
 
-type SnapshotSeries = {
+export type SnapshotSeries = {
   snapshotDate: Date;
   readinessScore: number;
   periodLabel?: string;
@@ -13,6 +13,22 @@ type SnapshotSeries = {
   acadYear?: string;
   semester?: string;
 };
+
+export function toSnapshotSeries<T extends { snapshotDate: Date; readinessScore: number }>(snapshot: T & {
+  periodLabel?: string | null;
+  periodOrder?: number | null;
+  acadYear?: string | null;
+  semester?: string | null;
+}): SnapshotSeries {
+  return {
+    snapshotDate: snapshot.snapshotDate,
+    readinessScore: snapshot.readinessScore,
+    periodLabel: snapshot.periodLabel ?? undefined,
+    periodOrder: snapshot.periodOrder ?? undefined,
+    acadYear: snapshot.acadYear ?? undefined,
+    semester: snapshot.semester ?? undefined
+  };
+}
 
 export function buildTimeSeriesDataset(snapshots: SnapshotSeries[], lookback = DEFAULT_LOOKBACK) {
   const ordered = snapshots

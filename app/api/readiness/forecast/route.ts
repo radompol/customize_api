@@ -1,6 +1,6 @@
 import { getDbInitError, getDbSafely } from "@/lib/db";
 import { apiError, apiSuccess } from "@/lib/api";
-import { predictNextPeriods } from "@/lib/forecasting";
+import { predictNextPeriods, toSnapshotSeries } from "@/lib/forecasting";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     orderBy: { snapshotDate: "asc" }
   });
 
-  const forecast = await predictNextPeriods(snapshots);
+  const forecast = await predictNextPeriods(snapshots.map(toSnapshotSeries));
 
   const run = await db.forecastRun.create({
     data: {
