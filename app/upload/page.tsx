@@ -35,8 +35,8 @@ export default async function UploadPage() {
             <span className="eyebrow">AXZTech Intake</span>
             <h1>Dataset Import</h1>
             <p>
-              Upload accreditation exports, validate the records, and persist local batches for repeatable dashboard
-              analysis and forecasting.
+              Upload accreditation exports, validate the records, and persist server-side batches for repeatable
+              dashboard analysis and forecasting.
             </p>
           </div>
           <aside className="hero-card">
@@ -52,7 +52,7 @@ export default async function UploadPage() {
               </div>
               <div className="hero-metric">
                 <strong>Storage mode</strong>
-                <span>IndexedDB-backed browser workflow</span>
+                <span>Supabase-backed API workflow</span>
               </div>
             </div>
           </aside>

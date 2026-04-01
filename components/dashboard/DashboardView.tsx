@@ -10,14 +10,6 @@ import { ReadinessTable } from "@/components/ReadinessTable";
 import { RiskBadge } from "@/components/RiskBadge";
 import { SummaryCard } from "@/components/SummaryCard";
 import { TrendChart } from "@/components/TrendChart";
-import {
-  getIndexedDbAreas,
-  getIndexedDbForecast,
-  getIndexedDbPeriods,
-  getIndexedDbPrograms,
-  getIndexedDbSummary,
-  getIndexedDbTrend
-} from "@/lib/indexedDb";
 import type { ReadinessAreaRow } from "@/models/readiness.types";
 
 type SummaryPayload = {
@@ -47,7 +39,7 @@ export function DashboardView({ programs, dbMessage }: { programs: string[]; dbM
   const [areas, setAreas] = useState<ReadinessAreaRow[]>([]);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [forecast, setForecast] = useState<ForecastPoint[]>([]);
-  const [sourceLabel, setSourceLabel] = useState<"api" | "indexeddb" | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const query = program ? `?program=${encodeURIComponent(program)}` : "";
@@ -55,22 +47,21 @@ export function DashboardView({ programs, dbMessage }: { programs: string[]; dbM
 
     async function load() {
       try {
-        if (period) {
-          throw new Error("Use local academic-period filtering");
-        }
-
+        setError(null);
         const responses = await Promise.all([
-          fetch(summaryEndpoint).then((response) => response.json()),
-          fetch(`/api/readiness/areas${query}`).then((response) => response.json()),
-          fetch(`/api/readiness/trend${query}`).then((response) => response.json()),
-          fetch(`/api/readiness/forecast${query}`).then((response) => response.json())
+          fetch(summaryEndpoint),
+          fetch(`/api/readiness/areas${query}`),
+          fetch(`/api/readiness/trend${query}`),
+          fetch(`/api/readiness/forecast${query}`)
         ]);
+        const payloads = await Promise.all(responses.map((response) => response.json()));
 
-        if (responses.some((payload) => !payload.success)) {
-          throw new Error("API unavailable");
+        if (responses.some((response) => !response.ok) || payloads.some((payload) => !payload.success)) {
+          const failed = payloads.find((payload) => !payload.success);
+          throw new Error(failed?.error ?? "Accreditation API unavailable");
         }
 
-        const [summaryPayload, areaPayload, trendPayload, forecastPayload] = responses;
+        const [summaryPayload, areaPayload, trendPayload, forecastPayload] = payloads;
         if (program) {
           const scoped = summaryPayload.data?.summary;
           setSummary(
@@ -92,38 +83,28 @@ export function DashboardView({ programs, dbMessage }: { programs: string[]; dbM
         } else {
           setSummary(summaryPayload.data);
         }
+        setAvailablePrograms(programs);
+        setAvailablePeriods([]);
         setAreas(areaPayload.data ?? []);
         setTrend(trendPayload.data ?? []);
         setForecast(forecastPayload.data?.forecast ?? []);
-        setSourceLabel("api");
-      } catch {
-        const [localPrograms, localPeriods, localSummary, localAreas, localTrend, localForecast] = await Promise.all([
-          getIndexedDbPrograms(),
-          getIndexedDbPeriods(program),
-          getIndexedDbSummary(program, period),
-          getIndexedDbAreas(program, period),
-          getIndexedDbTrend(program),
-          getIndexedDbForecast(program)
-        ]);
-
-        setAvailablePrograms(localPrograms);
-        setAvailablePeriods(localPeriods);
-        setSummary(localSummary);
-        setAreas(localAreas);
-        setTrend(localTrend);
-        setForecast(localForecast.forecast);
-        setSourceLabel("indexeddb");
+      } catch (loadError) {
+        setSummary(null);
+        setAreas([]);
+        setTrend([]);
+        setForecast([]);
+        setError(loadError instanceof Error ? loadError.message : "Failed to load accreditation readiness data.");
       }
     }
 
     void load();
-  }, [program, period]);
+  }, [program, period, programs]);
 
   if (!summary) {
     return (
       <EmptyState
         title="No readiness data yet"
-        message={dbMessage ?? "Import a CSV/XLSX dataset to populate the API."}
+        message={error ?? dbMessage ?? "Import a CSV/XLSX dataset to populate the API."}
       />
     );
   }
@@ -161,7 +142,8 @@ export function DashboardView({ programs, dbMessage }: { programs: string[]; dbM
           <div className="kpi">Avg aging days: {summary.averageAgingDays}</div>
         </div>
         <p className="muted">Warnings: {summary.warningFlags.length ? summary.warningFlags.join(", ") : "None"}</p>
-        <p className="muted">Data source: {sourceLabel === "indexeddb" ? "IndexedDB (local browser storage)" : "API"}</p>
+        <p className="muted">Data source: API</p>
+        {period ? <p className="muted">Academic period filtering is not available in API mode.</p> : null}
       </div>
       <div className="grid equal">
         <TrendChart data={trend} />

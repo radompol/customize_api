@@ -1,14 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { saveImportToIndexedDb } from "@/lib/indexedDb";
 
 export function UploadForm() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
   async function handleSubmit(formData: FormData) {
-    setStatus("Saving dataset to IndexedDB...");
+    setStatus("Uploading dataset to the API...");
     setError("");
 
     const file = formData.get("file");
@@ -17,9 +16,16 @@ export function UploadForm() {
       return;
     }
 
-    const result = await saveImportToIndexedDb(file);
+    const response = await fetch("/api/import", {
+      method: "POST",
+      body: formData
+    });
+    const result = await response.json();
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.error ?? "Dataset import failed.");
+    }
     setStatus(
-      `Saved ${result.rowsImported} rows locally in batch ${result.batchId}; created ${result.snapshotsCreated} snapshots.`
+      `Imported ${result.rowsImported} rows in batch ${result.batchId}; created ${result.snapshotsCreated} snapshots.`
     );
     if (result.errors.length) {
       setError(`Imported with row warnings: ${result.errors.slice(0, 3).join(" | ")}`);
@@ -36,19 +42,19 @@ export function UploadForm() {
           await handleSubmit(formData);
         } catch (submissionError) {
           setStatus("");
-          setError(submissionError instanceof Error ? submissionError.message : "Local import failed.");
+          setError(submissionError instanceof Error ? submissionError.message : "API import failed.");
         }
       }}
     >
       <div className="split-callout">
         <div className="surface-copy">
           <h3>Upload Accreditation Export</h3>
-          <p className="muted">Accepts `.csv` and `.xlsx` exports and stores them locally in your browser via IndexedDB.</p>
+          <p className="muted">Accepts `.csv` and `.xlsx` exports and sends them to the readiness API for processing.</p>
         </div>
         <div className="mini-metrics">
           <div>
-            <strong>Fast local import</strong>
-            <span className="muted">No server dependency required for browser-side analysis.</span>
+            <strong>API-backed import</strong>
+            <span className="muted">Validated and persisted through the server-side data pipeline.</span>
           </div>
           <div>
             <strong>Snapshot-ready</strong>
