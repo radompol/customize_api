@@ -1,0 +1,711 @@
+CODEX INSTRUCTION
+Project: External Accreditation Readiness API + Time Series Forecast + HTML Visualizer
+Stack: Next.js + TensorFlow.js + Prisma + MySQL + CSV/XLSX Import
+
+Build a Next.js external API system that ingests the exported accreditation readiness dataset from Excel/CSV, computes current readiness metrics, trains a TensorFlow.js time series forecasting model, and returns both:
+1. API JSON responses for readiness and prediction
+2. HTML visualizer pages for charts, tables, and readiness dashboards
+
+The system must be scaffolded for future production deployment, but the first version may use file-based CSV upload/import and local database storage.
+
+================================================================================
+1. SYSTEM GOAL
+================================================================================
+
+The system will:
+- accept an exported CSV/XLSX dataset from the accreditation view
+- normalize and store the data
+- compute readiness metrics per:
+  - program
+  - area
+  - instrument
+  - academic year
+  - semester
+- generate a current readiness level
+- build a TensorFlow time series prediction model
+- forecast future readiness trends
+- expose all results through external REST API endpoints
+- render an HTML visual dashboard in Next.js
+
+================================================================================
+2. OUTPUTS REQUIRED
+================================================================================
+
+Implement these major outputs:
+
+A. Data ingestion
+- upload CSV/XLSX
+- parse rows
+- validate columns
+- transform into normalized records
+- save into database tables
+
+B. Readiness engine
+- compute current readiness score
+- compute risk level
+- compute area completion and deficiency burden
+- compute aging and revision burden
+
+C. Time series forecasting
+- aggregate readiness snapshots over time
+- train TensorFlow.js model
+- predict readiness score for future periods
+- forecast risk trend
+
+D. API layer
+- return JSON for:
+  - current readiness
+  - area-level readiness
+  - trend series
+  - forecast series
+  - dashboard summary
+
+E. HTML visualizer
+- show summary cards
+- readiness tables
+- line charts
+- forecast charts
+- area comparison charts
+- risk indicators
+
+================================================================================
+3. PROJECT STRUCTURE
+================================================================================
+
+Use Next.js App Router.
+
+ /accreditation-readiness-api
+   /app
+     /api
+       /import
+         /route.ts
+       /readiness
+         /summary
+           /route.ts
+         /program
+           /[program]
+             /route.ts
+         /areas
+           /route.ts
+         /trend
+           /route.ts
+         /forecast
+           /route.ts
+       /health
+         /route.ts
+
+     /dashboard
+       /page.tsx
+     /dashboard/program
+       /[program]
+         /page.tsx
+     /upload
+       /page.tsx
+
+     /components
+       SummaryCard.tsx
+       ReadinessTable.tsx
+       TrendChart.tsx
+       ForecastChart.tsx
+       RiskBadge.tsx
+       UploadForm.tsx
+       FilterBar.tsx
+       LoadingState.tsx
+       EmptyState.tsx
+
+   /lib
+     db.ts
+     csvParser.ts
+     xlsxParser.ts
+     validators.ts
+     readinessEngine.ts
+     aggregation.ts
+     forecasting.ts
+     scaler.ts
+     featureBuilder.ts
+     dateUtils.ts
+     riskRules.ts
+     constants.ts
+
+   /models
+     dataset.types.ts
+     readiness.types.ts
+     forecast.types.ts
+
+   /prisma
+     schema.prisma
+
+   /public
+     /exports
+     /samples
+
+   /scripts
+     seed.ts
+     importSample.ts
+     snapshotReadiness.ts
+
+   /docs
+     api-contract.md
+     readiness-formula.md
+     forecasting-notes.md
+
+================================================================================
+4. CORE BUSINESS FLOW
+================================================================================
+
+Step 1: Import dataset
+The user uploads Excel/CSV exported from phpMyAdmin view.
+
+Expected raw fields include at minimum:
+- ap_id
+- program
+- acadYear
+- semester
+- area_id
+- area_code
+- area_description
+- instrument_id
+- requirement_description
+- assigned_at
+- assigned_modified_at
+- assigned_status
+- approvedOrder
+- latest_uf_id
+- latest_file_uploaded_at
+- latest_file_version
+- latest_file_status
+- latest_filename
+- latest_file_extension
+- has_file
+- total_files_uploaded
+- total_status_logs
+- revise_count
+- reply_count
+- total_comments
+- non_empty_comments
+- days_since_assignment
+- days_since_latest_upload
+- is_pending_flag
+
+Optional future fields:
+- deadline_date
+- submission_date
+- days_to_deadline
+- days_overdue
+
+Step 2: Normalize dataset
+Store imported data as row-level requirement records.
+
+Also generate snapshot records for:
+- per program readiness
+- per area readiness
+- per semester readiness
+- per academic year readiness
+
+Step 3: Compute readiness score
+Create a rule-based readiness score first.
+
+Suggested component weights:
+- Document completion = 30%
+- Compliance status = 25%
+- Quality / revisions / comments = 20%
+- Aging / pending burden = 15%
+- Timeline performance = 10%
+
+If timeline fields are missing, redistribute weight proportionally.
+
+Example scoring logic:
+For each record:
+- approved or compliant requirement gets higher points
+- pending or revise lowers score
+- more comments lowers score
+- more revision cycles lowers score
+- long aging lowers score
+- no file lowers score
+
+Then aggregate by:
+- area
+- program
+- semester
+- academic year
+
+Step 4: Assign readiness level
+Map score to labels:
+- 0.85 to 1.00 -> Low Risk / Highly Ready
+- 0.70 to 0.84 -> Moderate Risk / Nearly Ready
+- 0.50 to 0.69 -> Medium Risk / Needs Attention
+- below 0.50 -> High Risk / Not Ready
+
+Also return:
+- riskLevel
+- priorityLevel
+- warningFlags
+
+Step 5: Build time series data
+For TensorFlow time series, aggregate score by time bucket.
+
+Minimum supported time axis:
+- by import date
+- by month
+- by semester
+- by academic year
+
+If historical snapshots are not yet available, implement a snapshot table and seed the first snapshot from imported data.
+
+Create time series sequences per:
+- program
+- area
+- whole institution
+
+Step 6: Train TensorFlow model
+Use TensorFlow.js in server-side Node runtime.
+
+Start with a simple sequence forecasting model:
+- input = previous readiness scores across time
+- output = next readiness score
+
+Model may use:
+- dense sequence model
+- or simple LSTM if stable
+
+Do not over-engineer first version.
+
+Support:
+- training on demand
+- caching trained model
+- retraining when new snapshots are imported
+
+Step 7: Forecast readiness
+Return:
+- predicted next readiness score
+- predicted next 3 periods
+- trend direction
+- confidence note
+- risk forecast
+
+Examples:
+- improving
+- stable
+- declining
+- volatile
+
+================================================================================
+5. DATABASE DESIGN
+================================================================================
+
+Use Prisma with MySQL.
+
+Required tables:
+
+A. import_batches
+Tracks uploaded files and import runs.
+Fields:
+- id
+- file_name
+- file_type
+- imported_at
+- row_count
+- status
+- notes
+
+B. requirement_records
+Stores each imported requirement row.
+Fields:
+- id
+- import_batch_id
+- ap_id
+- program
+- acad_year
+- semester
+- area_id
+- area_code
+- area_description
+- instrument_id
+- requirement_description
+- assigned_at
+- assigned_modified_at
+- assigned_status
+- approved_order
+- latest_uf_id
+- latest_file_uploaded_at
+- latest_file_version
+- latest_file_status
+- latest_filename
+- latest_file_extension
+- has_file
+- total_files_uploaded
+- total_status_logs
+- revise_count
+- reply_count
+- total_comments
+- non_empty_comments
+- days_since_assignment
+- days_since_latest_upload
+- is_pending_flag
+- deadline_date nullable
+- submission_date nullable
+- days_to_deadline nullable
+- days_overdue nullable
+- created_at
+- updated_at
+
+C. readiness_snapshots
+Aggregated readiness history for time series.
+Fields:
+- id
+- snapshot_date
+- program nullable
+- area_id nullable
+- area_code nullable
+- acad_year nullable
+- semester nullable
+- readiness_score
+- risk_level
+- readiness_label
+- total_requirements
+- completed_requirements
+- pending_requirements
+- average_revision_count
+- average_comment_count
+- average_aging_days
+- metadata_json
+- created_at
+
+D. forecast_runs
+Stores model output metadata.
+Fields:
+- id
+- target_scope
+- target_program nullable
+- target_area_id nullable
+- trained_at
+- model_version
+- periods_used
+- loss_value
+- notes
+
+E. forecast_predictions
+Stores forecasted values.
+Fields:
+- id
+- forecast_run_id
+- forecast_date
+- target_scope
+- target_program nullable
+- target_area_id nullable
+- predicted_readiness_score
+- predicted_risk_level
+- trend_direction
+- confidence_note
+- created_at
+
+================================================================================
+6. API CONTRACT
+================================================================================
+
+POST /api/import
+Purpose:
+- upload CSV/XLSX
+- parse and save records
+- generate snapshots
+
+Response example:
+{
+  "success": true,
+  "batchId": 1,
+  "rowsImported": 540,
+  "snapshotsCreated": 28
+}
+
+GET /api/readiness/summary
+Return institution-wide summary.
+
+Response example:
+{
+  "success": true,
+  "data": {
+    "overallReadinessScore": 0.81,
+    "readinessLabel": "Moderate Risk / Nearly Ready",
+    "riskLevel": "Medium",
+    "totalPrograms": 4,
+    "totalRequirements": 1220,
+    "completedRequirements": 950,
+    "pendingRequirements": 270,
+    "averageRevisionCount": 1.4,
+    "averageCommentCount": 2.1
+  }
+}
+
+GET /api/readiness/program/[program]
+Return one program’s readiness summary.
+
+GET /api/readiness/areas?program=BS%20Information%20Technology
+Return readiness per area.
+
+GET /api/readiness/trend?program=BS%20Information%20Technology
+Return historical series for charting.
+
+GET /api/readiness/forecast?program=BS%20Information%20Technology
+Return forecast series.
+
+Response example:
+{
+  "success": true,
+  "data": {
+    "program": "BS in Information Technology",
+    "currentScore": 0.84,
+    "forecast": [
+      { "period": "2026-06", "score": 0.85, "riskLevel": "Medium" },
+      { "period": "2026-07", "score": 0.87, "riskLevel": "Low" },
+      { "period": "2026-08", "score": 0.88, "riskLevel": "Low" }
+    ],
+    "trendDirection": "Improving"
+  }
+}
+
+GET /api/health
+Return health status.
+
+================================================================================
+7. READINESS ENGINE RULES
+================================================================================
+
+Create lib/readinessEngine.ts.
+
+Implement:
+- computeRequirementScore(record)
+- aggregateAreaReadiness(records)
+- aggregateProgramReadiness(records)
+- aggregateInstitutionReadiness(records)
+- resolveRiskLevel(score)
+- resolveReadinessLabel(score)
+
+Example requirement-level logic:
+Use normalized values:
+- file presence
+- latest status
+- revision burden
+- comment burden
+- aging burden
+- overdue burden if available
+
+Principle:
+- higher revisions/comments/aging reduce score
+- approved/completed increases score
+- pending/revise lowers score
+
+Do not hardcode only one status vocabulary; make status mappings configurable in constants.ts.
+
+================================================================================
+8. TENSORFLOW TIME SERIES MODULE
+================================================================================
+
+Create lib/forecasting.ts.
+
+Use TensorFlow.js server-side.
+
+Tasks:
+- extract historical readiness scores from readiness_snapshots
+- sort by time ascending
+- normalize values
+- build lookback windows
+- train model
+- forecast next N periods
+
+Minimum functions:
+- buildTimeSeriesDataset(snapshots, lookback)
+- trainForecastModel(series)
+- predictNextPeriods(model, seedWindow, periods)
+- classifyTrendDirection(actualAndForecastedValues)
+
+Guidance:
+Use small sequence input first:
+- lookback = 3 or 6 periods
+
+Return forecast even if data is limited, but mark:
+- confidence_note = "Low historical depth" when snapshots are few
+
+Important:
+If historical data is too small:
+- do not fail hard
+- fallback to moving-average or trendline projection
+- still return usable API data
+
+================================================================================
+9. HTML VISUALIZER REQUIREMENTS
+================================================================================
+
+Use Next.js pages under /dashboard.
+
+The visualizer must include:
+
+Dashboard page
+- overall readiness score card
+- readiness label
+- total requirements
+- completed vs pending
+- area distribution chart
+- trend chart
+- forecast chart
+- top risk areas
+- program filter
+
+Program page
+- selected program summary
+- area table
+- risk badges
+- trend line chart
+- forecast chart
+- requirement count cards
+
+Upload page
+- CSV/XLSX upload form
+- validation result
+- import summary
+- latest batches table
+
+Charts
+Use a charting library compatible with Next.js.
+Render:
+- line chart for historical readiness
+- line chart for forecast
+- bar chart for area comparison
+- stacked chart for completion vs pending if needed
+
+The visualizer must consume the REST API instead of directly coupling to DB logic.
+
+================================================================================
+10. CALLBACK VISUALIZER CONCEPT
+================================================================================
+
+The API layer must support callback visualizer behavior by returning frontend-consumable JSON contracts that can immediately render in HTML.
+
+That means each endpoint should already structure data for visualization, not only raw DB rows.
+
+Example chart-ready response:
+{
+  "success": true,
+  "chart": {
+    "labels": ["2026-01", "2026-02", "2026-03"],
+    "series": [0.72, 0.76, 0.81]
+  }
+}
+
+Also create lightweight helper endpoints for widgets:
+- /api/readiness/widgets/summary
+- /api/readiness/widgets/areas
+- /api/readiness/widgets/trend
+- /api/readiness/widgets/forecast
+
+================================================================================
+11. IMPORT LOGIC
+================================================================================
+
+The import module must:
+- accept CSV and XLSX
+- auto-detect file type
+- validate required columns
+- trim header whitespace
+- normalize empty strings to null where appropriate
+- parse dates safely
+- reject malformed rows with row-level error logging
+- continue partial import when possible
+
+Create reusable parser functions:
+- parseCsvFile
+- parseXlsxFile
+- mapRawRowToRequirementRecord
+- validateRequiredColumns
+
+================================================================================
+12. SAMPLE DEV PHASES
+================================================================================
+
+Phase 1
+- scaffold Next.js app
+- Prisma schema
+- upload/import endpoint
+- summary readiness engine
+- dashboard summary page
+
+Phase 2
+- area/program breakdown endpoints
+- charts and HTML visualizer
+- readiness snapshot generation
+
+Phase 3
+- TensorFlow time series training
+- forecast endpoint
+- forecast chart UI
+
+Phase 4
+- model retraining flow
+- import history
+- batch management
+- confidence notes
+- future deadline integration
+
+================================================================================
+13. EDGE CASES TO HANDLE
+================================================================================
+
+- no uploaded file rows
+- all rows pending
+- missing comments data
+- missing revision data
+- no historical snapshots yet
+- sparse data per program
+- duplicate imports
+- invalid date formats
+- mixed semester labeling
+- inconsistent status naming
+
+Implement defensive parsing and fallback behavior.
+
+================================================================================
+14. NON-FUNCTIONAL REQUIREMENTS
+================================================================================
+
+- TypeScript only
+- clean modular architecture
+- no business logic directly inside route handlers
+- all formulas centralized in lib
+- API responses must be consistent
+- use server-side runtime for TensorFlow and parsing
+- separate raw import records from aggregated readiness snapshots
+- code must be easy to extend later for deadline table integration and live DB connector
+
+================================================================================
+15. WHAT TO BUILD FIRST
+================================================================================
+
+Start with this order:
+1. Prisma schema
+2. upload/import page
+3. /api/import
+4. readiness scoring engine
+5. /api/readiness/summary
+6. /dashboard
+7. snapshots table creation
+8. trend endpoint
+9. TensorFlow forecast module
+10. forecast endpoint
+11. program-level page
+12. area visualizer
+
+================================================================================
+16. DELIVERABLE EXPECTATION
+================================================================================
+
+Generate:
+- full project scaffold
+- Prisma schema
+- import route
+- readiness engine utilities
+- trend and forecast utilities
+- dashboard pages
+- reusable chart/table components
+- sample seed data loader
+- API contract documentation comments in code
+
+Use clean placeholder styling first. Prioritize functionality and data flow over final UI polish.

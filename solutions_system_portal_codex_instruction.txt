@@ -1,0 +1,313 @@
+CODEX INSTRUCTION
+Project: Solutions System Portal Integration
+Integration Target: AXZTech Accreditation Readiness API
+Mode: Consume as external callable REST API
+
+Use this instruction when working inside the Solutions System Portal project.
+
+================================================================================
+1. PRIMARY GOAL
+================================================================================
+
+Do not rebuild the accreditation readiness engine inside the Solutions System Portal.
+
+Treat the AXZTech Accreditation Readiness project as an external REST API service that provides:
+- readiness summary data
+- program readiness data
+- area-level readiness data
+- historical trend data
+- forecast data
+- widget-ready chart payloads
+- import and health endpoints
+
+The portal must consume this service through HTTP requests and render the returned data in the portal UI.
+
+================================================================================
+2. INTEGRATION RULE
+================================================================================
+
+When the user asks for accreditation readiness, dashboard metrics, forecasting, or chart data:
+- call the external API first
+- map the JSON response into the portal's internal UI models
+- keep API access inside service modules or server actions
+- do not duplicate readiness formulas in the portal unless explicitly requested as fallback logic
+
+The portal should be a client of the service, not a second implementation of the same system.
+
+================================================================================
+3. BASE URL CONFIGURATION
+================================================================================
+
+Always read the API base URL from environment configuration.
+
+Expected env variable:
+- `ACCREDITATION_API_BASE_URL`
+
+Example:
+- `ACCREDITATION_API_BASE_URL=http://localhost:3000`
+
+If the portal has separate server/client env handling:
+- keep raw API access on the server side where possible
+- expose only portal-safe data to the client
+
+================================================================================
+4. AVAILABLE ENDPOINTS
+================================================================================
+
+Use these endpoints from the AXZTech Accreditation Readiness API:
+
+Health:
+- `GET /api/health`
+
+Import:
+- `POST /api/import`
+
+Readiness:
+- `GET /api/readiness/summary`
+- `GET /api/readiness/program/[program]`
+- `GET /api/readiness/areas?program=...`
+- `GET /api/readiness/trend?program=...`
+- `GET /api/readiness/forecast?program=...`
+
+Widget aliases:
+- `GET /api/readiness/widgets/summary`
+- `GET /api/readiness/widgets/areas`
+- `GET /api/readiness/widgets/trend`
+- `GET /api/readiness/widgets/forecast`
+
+================================================================================
+5. EXPECTED RESPONSE SHAPE
+================================================================================
+
+Assume the service returns JSON in a consistent envelope:
+
+Success pattern:
+```json
+{
+  "success": true,
+  "data": {}
+}
+```
+
+Import pattern:
+```json
+{
+  "success": true,
+  "batchId": 1,
+  "rowsImported": 540,
+  "snapshotsCreated": 28
+}
+```
+
+The portal must:
+- check `response.ok`
+- parse JSON safely
+- verify `success === true`
+- handle missing or partial `data`
+- show graceful empty states on no data
+- show friendly error states on service failure
+
+================================================================================
+6. REQUIRED PORTAL ARCHITECTURE
+================================================================================
+
+In the Solutions System Portal, structure the integration like this:
+
+- `lib/accreditationApi.ts`
+  Purpose:
+  - low-level fetch wrappers
+  - base URL handling
+  - query string construction
+  - response validation
+
+- `lib/accreditationMappers.ts`
+  Purpose:
+  - map external API payloads to portal-specific view models
+  - normalize labels, score formatting, chart arrays, table rows
+
+- `types/accreditation.ts`
+  Purpose:
+  - define API response types
+  - define mapped portal models
+
+- `components/accreditation/*`
+  Purpose:
+  - dashboard cards
+  - area tables
+  - trend/forecast charts
+  - health status blocks
+  - empty/error states
+
+Keep route handlers, page components, and UI components free of raw fetch logic when possible.
+
+================================================================================
+7. REQUIRED FETCH WRAPPERS
+================================================================================
+
+Create service functions similar to:
+
+- `getAccreditationHealth()`
+- `getAccreditationSummary()`
+- `getAccreditationProgram(program: string)`
+- `getAccreditationAreas(program?: string)`
+- `getAccreditationTrend(program?: string)`
+- `getAccreditationForecast(program?: string)`
+- `uploadAccreditationDataset(formData: FormData)`
+
+Implementation rules:
+- URL-encode `program`
+- centralize headers
+- centralize timeout/retry behavior if the portal supports it
+- throw structured errors with status code and endpoint context
+
+================================================================================
+8. EXAMPLE REQUEST RULES
+================================================================================
+
+Summary:
+- `GET {ACCREDITATION_API_BASE_URL}/api/readiness/summary`
+
+Program:
+- `GET {ACCREDITATION_API_BASE_URL}/api/readiness/program/{encodeURIComponent(program)}`
+
+Areas:
+- `GET {ACCREDITATION_API_BASE_URL}/api/readiness/areas?program={encodeURIComponent(program)}`
+
+Trend:
+- `GET {ACCREDITATION_API_BASE_URL}/api/readiness/trend?program={encodeURIComponent(program)}`
+
+Forecast:
+- `GET {ACCREDITATION_API_BASE_URL}/api/readiness/forecast?program={encodeURIComponent(program)}`
+
+Health:
+- `GET {ACCREDITATION_API_BASE_URL}/api/health`
+
+Import:
+- `POST {ACCREDITATION_API_BASE_URL}/api/import`
+
+================================================================================
+9. UI/UX EXPECTATIONS IN THE PORTAL
+================================================================================
+
+When integrating the API into the Solutions System Portal:
+- show summary cards for overall readiness, label, requirements, completion split
+- show program selector if multiple programs are available
+- show area comparison table
+- show trend chart
+- show forecast chart
+- show service health status if endpoint is unavailable
+- distinguish empty data vs server error
+
+If the external API is temporarily unavailable:
+- do not crash the portal page
+- render a compact fallback error panel
+- include retry capability where appropriate
+
+================================================================================
+10. IMPORT WORKFLOW EXPECTATIONS
+================================================================================
+
+If the portal needs to upload CSV/XLSX to the readiness system:
+- send the file as multipart form data to `POST /api/import`
+- do not parse the spreadsheet inside the portal unless explicitly requested
+- display:
+  - batch id
+  - rows imported
+  - snapshots created
+  - failure message if import fails
+
+================================================================================
+11. SECURITY AND BOUNDARIES
+================================================================================
+
+The portal must not assume unrestricted trust.
+
+Apply these rules:
+- validate all response fields before rendering
+- sanitize displayed strings where needed
+- keep secrets in env vars only
+- do not hardcode localhost URLs outside local development
+- prefer server-side calls if authentication, auditing, or secret headers are involved
+
+If auth is later added to the readiness API:
+- integrate via a dedicated auth header mechanism in the service layer
+- do not scatter tokens in UI code
+
+================================================================================
+12. CODING RULES FOR CODEX
+================================================================================
+
+When asked to add accreditation readiness features to the Solutions System Portal:
+
+1. Inspect the portal's current architecture first.
+2. Reuse existing API client/service patterns if present.
+3. Add a dedicated accreditation API client module if none exists.
+4. Consume the external REST API instead of recreating readiness formulas.
+5. Use strong TypeScript types for all payloads.
+6. Add loading, empty, and error states.
+7. Keep UI integration modular and reviewable.
+8. If the base URL is missing, surface a clear configuration error.
+
+Do not:
+- reimplement forecasting locally
+- move accreditation business logic into page files
+- hardcode production URLs
+- silently swallow API failures
+
+================================================================================
+13. PREFERRED IMPLEMENTATION ORDER
+================================================================================
+
+When building the integration, work in this order:
+
+1. Add env configuration for `ACCREDITATION_API_BASE_URL`
+2. Add `types/accreditation.ts`
+3. Add `lib/accreditationApi.ts`
+4. Add response mappers if needed
+5. Add summary dashboard integration
+6. Add program/area/trend/forecast views
+7. Add import UI if required
+8. Add health/status handling
+
+================================================================================
+14. EXAMPLE TASK INTERPRETATION
+================================================================================
+
+If the user says:
+- "show accreditation readiness in the portal"
+  Then:
+  - consume `GET /api/readiness/summary`
+  - render summary cards
+
+- "add program breakdown"
+  Then:
+  - consume `GET /api/readiness/program/[program]`
+  - render summary plus area rows
+
+- "add charts"
+  Then:
+  - consume `GET /api/readiness/trend`
+  - consume `GET /api/readiness/forecast`
+  - render chart-ready data
+
+- "add import"
+  Then:
+  - call `POST /api/import`
+  - do not parse files locally unless explicitly required
+
+================================================================================
+15. DELIVERABLE EXPECTATION
+================================================================================
+
+When using this instruction, generate:
+- env variable usage
+- typed API client
+- reusable portal integration layer
+- UI components that consume the external readiness service
+- graceful fallback handling
+
+Optimize for:
+- maintainability
+- clean separation of concerns
+- external API consumption
+- production-friendly integration

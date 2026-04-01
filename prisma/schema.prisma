@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model ImportBatch {
+  id         Int                 @id @default(autoincrement())
+  fileName   String
+  fileType   String
+  importedAt DateTime            @default(now())
+  rowCount   Int                 @default(0)
+  status     String
+  notes      String?             @db.Text
+  records    RequirementRecord[]
+}
+
+model RequirementRecord {
+  id                     Int        @id @default(autoincrement())
+  importBatchId          Int
+  apId                   String
+  program                String
+  acadYear               String
+  semester               String
+  areaId                 String
+  areaCode               String
+  areaDescription        String
+  instrumentId           String
+  requirementDescription String     @db.Text
+  assignedAt             DateTime?
+  assignedModifiedAt     DateTime?
+  assignedStatus         String?
+  approvedOrder          Int?
+  latestUfId             String?
+  latestFileUploadedAt   DateTime?
+  latestFileVersion      String?
+  latestFileStatus       String?
+  latestFilename         String?
+  latestFileExtension    String?
+  hasFile                Boolean    @default(false)
+  totalFilesUploaded     Int        @default(0)
+  totalStatusLogs        Int        @default(0)
+  reviseCount            Int        @default(0)
+  replyCount             Int        @default(0)
+  totalComments          Int        @default(0)
+  nonEmptyComments       Int        @default(0)
+  daysSinceAssignment    Int?
+  daysSinceLatestUpload  Int?
+  isPendingFlag          Boolean    @default(false)
+  deadlineDate           DateTime?
+  submissionDate         DateTime?
+  daysToDeadline         Int?
+  daysOverdue            Int?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+  importBatch            ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+
+  @@index([program])
+  @@index([areaId])
+  @@index([acadYear, semester])
+}
+
+model ReadinessSnapshot {
+  id                    Int       @id @default(autoincrement())
+  snapshotDate          DateTime
+  program               String?
+  areaId                String?
+  areaCode              String?
+  acadYear              String?
+  semester              String?
+  readinessScore        Float
+  riskLevel             String
+  readinessLabel        String
+  totalRequirements     Int
+  completedRequirements Int
+  pendingRequirements   Int
+  averageRevisionCount  Float
+  averageCommentCount   Float
+  averageAgingDays      Float
+  metadataJson          String?   @db.Text
+  createdAt             DateTime  @default(now())
+
+  @@index([program, snapshotDate])
+  @@index([areaId, snapshotDate])
+}
+
+model ForecastRun {
+  id            Int                  @id @default(autoincrement())
+  targetScope   String
+  targetProgram String?
+  targetAreaId  String?
+  trainedAt     DateTime             @default(now())
+  modelVersion  String
+  periodsUsed   Int
+  lossValue     Float?
+  notes         String?              @db.Text
+  predictions   ForecastPrediction[]
+}
+
+model ForecastPrediction {
+  id                      Int         @id @default(autoincrement())
+  forecastRunId           Int
+  forecastDate            DateTime
+  targetScope             String
+  targetProgram           String?
+  targetAreaId            String?
+  predictedReadinessScore Float
+  predictedRiskLevel      String
+  trendDirection          String
+  confidenceNote          String
+  createdAt               DateTime    @default(now())
+  forecastRun             ForecastRun @relation(fields: [forecastRunId], references: [id], onDelete: Cascade)
+
+  @@index([targetScope, forecastDate])
+}
