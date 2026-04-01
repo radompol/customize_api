@@ -1,0 +1,297 @@
+CODEX INSTRUCTION
+Project: Accreditation Readiness Dashboard
+Target Route: /dashboard
+Mode: Maintain and extend the dashboard as an API-backed dashboard only
+
+================================================================================
+1. PRIMARY GOAL
+================================================================================
+
+When working on `/dashboard`, treat it as an API-backed dashboard only.
+
+- the dashboard route is `/dashboard`
+- the page shell is server-rendered
+- the interactive dashboard content is client-side
+- dashboard data must come from the API
+- do not use browser-backed fallback reads for dashboard metrics, charts, filters, or tables
+
+The dashboard must consume API responses and render them correctly.
+
+================================================================================
+2. CURRENT ARCHITECTURE
+================================================================================
+
+Relevant files:
+
+- `app/dashboard/page.tsx`
+  - server page shell
+  - wraps the client dashboard view
+
+- `components/dashboard/DashboardView.tsx`
+  - main dashboard client view
+  - reads URL search params
+  - loads dashboard data from the API
+
+- `components/dashboard/ProgramDashboardView.tsx`
+  - program-specific route view
+
+- `components/FilterBar.tsx`
+  - filter UI for:
+    - `program`
+    - `period`
+    - `areaId`
+
+- `components/TrendChart.tsx`
+  - renders historical readiness
+
+- `components/ForecastChart.tsx`
+  - renders actual + projected readiness
+
+- `app/api/readiness/dashboard/route.ts`
+  - aggregated dashboard endpoint
+  - returns programs, periods, areas, summary, areaRows, trend, forecast
+
+- `lib/readinessSeries.ts`
+  - shared trend/forecast period-series builder
+
+- `lib/serverReadiness.ts`
+  - server helpers for latest-batch record reads
+
+================================================================================
+3. DATA SOURCE RULE
+================================================================================
+
+The dashboard is API-backed only.
+
+Current behavior should be:
+
+- dashboard reads use API endpoints
+- the main aggregated endpoint is `GET /api/readiness/dashboard`
+- trend and forecast must be computed from API-backed records through shared server logic
+
+Do not:
+
+- reintroduce browser-backed dashboard reads
+- reintroduce mixed API/browser dashboard behavior
+- let dashboard correctness depend on IndexedDB
+
+================================================================================
+4. FILTERS
+================================================================================
+
+The dashboard currently supports these URL filters:
+
+- `program`
+- `period`
+- `areaId`
+
+Examples:
+
+- `/dashboard?program=BSIT`
+- `/dashboard?period=2023-2024%201st`
+- `/dashboard?program=BSIT&period=2023-2024%201st&areaId=11`
+
+Filter behavior:
+
+- changing `program` clears `period` and `areaId`
+- changing `period` keeps the current `program`
+- changing `areaId` keeps the current `program/period`
+
+================================================================================
+5. PERIOD AND CHART LOGIC
+================================================================================
+
+Academic period handling is critical.
+
+Period data comes from:
+
+- `acadYear`
+- `semester`
+
+Labels are built as:
+
+- `${acadYear} ${normalizedSemester}`
+
+Examples:
+
+- `2023-2024 1st`
+- `2023-2024 2nd`
+- `2024-2025 1st`
+
+Normalization rules:
+
+- `First` => `1st`
+- `Second` => `2nd`
+- `Third` => `3rd`
+- `Summer` => `Summer`
+
+Current chart rule:
+
+- selected `period` is a lower bound, not an exact single-period-only match
+- actual history starts from the selected period onward
+- later actual periods remain visible if they exist
+- forecast begins after the last actual period in scope
+
+This logic is implemented in:
+
+- `lib/readinessSeries.ts`
+
+Do not fork chart rules across endpoints or components.
+
+================================================================================
+6. SHARED SERIES RULE
+================================================================================
+
+`lib/readinessSeries.ts` is the single source of truth for:
+
+- program filtering
+- area filtering
+- period lower-bound filtering
+- grouping by `acadYear + semester`
+- period ordering
+- trend series generation
+- forecast input generation
+
+Functions:
+
+- `buildScopedPeriodSeries(...)`
+- `buildScopedTrend(...)`
+- `buildScopedForecast(...)`
+
+Requirement:
+
+- API-backed chart routes must use these shared helpers
+- do not duplicate or fork chart computation logic in route handlers
+
+================================================================================
+7. LIVE API RULES
+================================================================================
+
+The dashboard should use:
+
+- `GET /api/readiness/dashboard`
+
+This endpoint returns:
+
+- `programs`
+- `periods`
+- `areas`
+- `summary`
+- `areaRows`
+- `trend`
+- `forecast`
+
+Important:
+
+- prefer one aggregated dashboard request over many separate requests
+- keep trend/forecast derived from latest-batch records through shared server logic
+- do not reintroduce the old multi-request dashboard loading path unless explicitly requested
+
+================================================================================
+8. FORECAST PERSISTENCE RULE
+================================================================================
+
+`GET /api/readiness/forecast` must not write forecast records by default during normal page reads.
+
+Current rule:
+
+- forecast persistence happens only when:
+  - `persist=1`
+  - or `persist=true`
+
+Reason:
+
+- writing forecast rows on every dashboard GET makes reads slower and adds unnecessary DB writes
+
+Do not reintroduce side-effect writes into normal dashboard read requests.
+
+================================================================================
+9. PERFORMANCE RULES
+================================================================================
+
+Known performance rules:
+
+- dashboard loading should prefer one aggregated API request
+- chart computation should reuse shared period-series helpers
+- forecast GET should stay read-only by default
+
+If performance regresses, check:
+
+1. whether multiple dashboard API requests were reintroduced
+2. whether forecast writes were reintroduced on page reads
+3. whether latest-batch record scans are repeated unnecessarily
+4. whether heavy computation was duplicated across endpoints
+
+================================================================================
+10. AREA FILTER RULES
+================================================================================
+
+Area options must not show repeated visible entries.
+
+Current rule:
+
+- area options are deduped before rendering
+- filter option keys must be unique and stable
+
+Do not:
+
+- use duplicate React option keys
+- allow repeated visible area labels in the area dropdown
+
+================================================================================
+11. UPLOAD WORKFLOW
+================================================================================
+
+Current upload behavior:
+
+- post the dataset to `/api/import`
+
+Relevant files:
+
+- `components/UploadForm.tsx`
+- `app/upload/page.tsx`
+
+Do not add local dataset parsing or browser-backed dashboard dependencies unless explicitly requested.
+
+================================================================================
+12. VALIDATION EXPECTATION
+================================================================================
+
+After changing dashboard code:
+
+- run `npx tsc --noEmit`
+- run `npm run build`
+
+This repo sometimes hits stale `.next` module/page errors during build.
+If that happens:
+
+- clear `.next`
+- rerun the build
+
+================================================================================
+13. DO NOT
+================================================================================
+
+Do not:
+
+- reintroduce browser-backed dashboard reads
+- split chart-generation logic across separate implementations
+- reintroduce multiple dashboard fetches when one aggregated endpoint is available
+- make forecast GET requests write by default
+- flatten academic periods into plain months unless explicitly requested
+- break URL-based filters for `program`, `period`, or `areaId`
+
+================================================================================
+14. SUCCESS CRITERIA
+================================================================================
+
+The `/dashboard` setup is correct only if:
+
+- changing institution/program changes summary, trend, forecast, and area table
+- changing period acts as a lower bound for charts
+- changing area scopes the dashboard correctly
+- area dropdown labels are unique
+- historical readiness uses academic periods in order
+- forecast starts after the last actual period in scope
+- dashboard reads are API-backed only
+- dashboard loading avoids redundant repeated API work

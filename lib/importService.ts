@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { parseCsvFile } from "@/lib/csvParser";
+import { buildAcademicPeriodDate } from "@/lib/dateUtils";
 import { parseXlsxFile } from "@/lib/xlsxParser";
 import {
   aggregateAreaReadiness,
@@ -9,79 +10,102 @@ import {
   type LightweightRecord
 } from "@/lib/readinessEngine";
 
+type SnapshotRecord = Awaited<ReturnType<ReturnType<typeof getDb>["requirementRecord"]["findMany"]>>[number];
+
+function groupRecordsByAcademicPeriod(records: SnapshotRecord[]) {
+  const groups = new Map<string, SnapshotRecord[]>();
+
+  records.forEach((record) => {
+    const key = `${record.acadYear}::${record.semester}`;
+    groups.set(key, [...(groups.get(key) ?? []), record]);
+  });
+
+  return Array.from(groups.entries()).map(([key, group]) => {
+    const [acadYear, semester] = key.split("::");
+    return { acadYear, semester, group };
+  });
+}
+
 async function createSnapshotsFromBatch(batchId: number) {
   const db = getDb();
   const records = await db.requirementRecord.findMany({ where: { importBatchId: batchId } });
-
-  const normalized: LightweightRecord[] = records.map(toLightweightRecord);
-
-  const snapshotDate = new Date();
   let createdCount = 0;
 
-  const institution = aggregateInstitutionReadiness(normalized);
-  await db.readinessSnapshot.create({
-    data: {
-      snapshotDate,
-      readinessScore: institution.readinessScore,
-      riskLevel: institution.riskLevel,
-      readinessLabel: institution.readinessLabel,
-      totalRequirements: institution.totalRequirements,
-      completedRequirements: institution.completedRequirements,
-      pendingRequirements: institution.pendingRequirements,
-      averageRevisionCount: institution.averageRevisionCount,
-      averageCommentCount: institution.averageCommentCount,
-      averageAgingDays: institution.averageAgingDays,
-      metadataJson: JSON.stringify({ scope: "institution", sourceBatchId: batchId, warningFlags: institution.warningFlags })
+  for (const { acadYear, semester, group } of groupRecordsByAcademicPeriod(records)) {
+    const normalized: LightweightRecord[] = group.map(toLightweightRecord);
+    const snapshotDate = buildAcademicPeriodDate(acadYear, semester);
+
+    const institution = aggregateInstitutionReadiness(normalized);
+    await db.readinessSnapshot.create({
+      data: {
+        snapshotDate,
+        acadYear,
+        semester,
+        readinessScore: institution.readinessScore,
+        riskLevel: institution.riskLevel,
+        readinessLabel: institution.readinessLabel,
+        totalRequirements: institution.totalRequirements,
+        completedRequirements: institution.completedRequirements,
+        pendingRequirements: institution.pendingRequirements,
+        averageRevisionCount: institution.averageRevisionCount,
+        averageCommentCount: institution.averageCommentCount,
+        averageAgingDays: institution.averageAgingDays,
+        metadataJson: JSON.stringify({ scope: "institution", sourceBatchId: batchId, warningFlags: institution.warningFlags })
+      }
+    });
+    createdCount += 1;
+
+    for (const program of Array.from(new Set(normalized.map((record) => record.program)))) {
+      const metrics = aggregateProgramReadiness(normalized.filter((record) => record.program === program));
+      await db.readinessSnapshot.create({
+        data: {
+          snapshotDate,
+          program,
+          acadYear,
+          semester,
+          readinessScore: metrics.readinessScore,
+          riskLevel: metrics.riskLevel,
+          readinessLabel: metrics.readinessLabel,
+          totalRequirements: metrics.totalRequirements,
+          completedRequirements: metrics.completedRequirements,
+          pendingRequirements: metrics.pendingRequirements,
+          averageRevisionCount: metrics.averageRevisionCount,
+          averageCommentCount: metrics.averageCommentCount,
+          averageAgingDays: metrics.averageAgingDays,
+          metadataJson: JSON.stringify({ scope: "program", sourceBatchId: batchId, warningFlags: metrics.warningFlags })
+        }
+      });
+      createdCount += 1;
     }
-  });
-  createdCount += 1;
 
-  for (const program of Array.from(new Set(normalized.map((record) => record.program)))) {
-    const metrics = aggregateProgramReadiness(normalized.filter((record) => record.program === program));
-    await db.readinessSnapshot.create({
-      data: {
-        snapshotDate,
-        program,
-        readinessScore: metrics.readinessScore,
-        riskLevel: metrics.riskLevel,
-        readinessLabel: metrics.readinessLabel,
-        totalRequirements: metrics.totalRequirements,
-        completedRequirements: metrics.completedRequirements,
-        pendingRequirements: metrics.pendingRequirements,
-        averageRevisionCount: metrics.averageRevisionCount,
-        averageCommentCount: metrics.averageCommentCount,
-        averageAgingDays: metrics.averageAgingDays,
-        metadataJson: JSON.stringify({ scope: "program", sourceBatchId: batchId, warningFlags: metrics.warningFlags })
-      }
-    });
-    createdCount += 1;
-  }
-
-  for (const area of aggregateAreaReadiness(normalized)) {
-    await db.readinessSnapshot.create({
-      data: {
-        snapshotDate,
-        program: area.program ?? undefined,
-        areaId: area.areaId ?? undefined,
-        areaCode: area.areaCode ?? undefined,
-        readinessScore: area.readinessScore,
-        riskLevel: area.riskLevel,
-        readinessLabel: area.readinessLabel,
-        totalRequirements: area.totalRequirements,
-        completedRequirements: area.completedRequirements,
-        pendingRequirements: area.pendingRequirements,
-        averageRevisionCount: area.averageRevisionCount,
-        averageCommentCount: area.averageCommentCount,
-        averageAgingDays: area.averageAgingDays,
-        metadataJson: JSON.stringify({
-          scope: "area",
-          sourceBatchId: batchId,
-          warningFlags: area.warningFlags,
-          areaDescription: area.areaDescription
-        })
-      }
-    });
-    createdCount += 1;
+    for (const area of aggregateAreaReadiness(normalized)) {
+      await db.readinessSnapshot.create({
+        data: {
+          snapshotDate,
+          program: area.program ?? undefined,
+          areaId: area.areaId ?? undefined,
+          areaCode: area.areaCode ?? undefined,
+          acadYear,
+          semester,
+          readinessScore: area.readinessScore,
+          riskLevel: area.riskLevel,
+          readinessLabel: area.readinessLabel,
+          totalRequirements: area.totalRequirements,
+          completedRequirements: area.completedRequirements,
+          pendingRequirements: area.pendingRequirements,
+          averageRevisionCount: area.averageRevisionCount,
+          averageCommentCount: area.averageCommentCount,
+          averageAgingDays: area.averageAgingDays,
+          metadataJson: JSON.stringify({
+            scope: "area",
+            sourceBatchId: batchId,
+            warningFlags: area.warningFlags,
+            areaDescription: area.areaDescription
+          })
+        }
+      });
+      createdCount += 1;
+    }
   }
 
   return createdCount;

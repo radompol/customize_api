@@ -10,6 +10,9 @@ import { ReadinessTable } from "@/components/ReadinessTable";
 import { RiskBadge } from "@/components/RiskBadge";
 import { SummaryCard } from "@/components/SummaryCard";
 import { TrendChart } from "@/components/TrendChart";
+import {
+  getIndexedDbDashboardData,
+} from "@/lib/indexedDb";
 import type { ReadinessAreaRow } from "@/models/readiness.types";
 
 type SummaryPayload = {
@@ -28,13 +31,17 @@ type SummaryPayload = {
 
 type TrendPoint = { period: string; score: number; riskLevel: string };
 type ForecastPoint = { period: string; score: number; riskLevel: string };
+type AreaOption = { id: string; key: string; label: string };
 
 export function DashboardView({ programs, dbMessage }: { programs: string[]; dbMessage?: string | null }) {
   const searchParams = useSearchParams();
+  const source = searchParams.get("source") === "live" ? "live" : "indexeddb";
   const program = searchParams.get("program");
   const period = searchParams.get("period");
+  const areaId = searchParams.get("areaId");
   const [availablePrograms, setAvailablePrograms] = useState<string[]>(programs);
   const [availablePeriods, setAvailablePeriods] = useState<string[]>([]);
+  const [availableAreas, setAvailableAreas] = useState<AreaOption[]>([]);
   const [summary, setSummary] = useState<SummaryPayload | null>(null);
   const [areas, setAreas] = useState<ReadinessAreaRow[]>([]);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
@@ -42,63 +49,100 @@ export function DashboardView({ programs, dbMessage }: { programs: string[]; dbM
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const query = program ? `?program=${encodeURIComponent(program)}` : "";
-    const summaryEndpoint = program ? `/api/readiness/program/${encodeURIComponent(program)}` : "/api/readiness/summary";
+    const readinessParams = new URLSearchParams();
+    if (program) {
+      readinessParams.set("program", program);
+    }
+    if (period) {
+      readinessParams.set("period", period);
+    }
+    if (areaId) {
+      readinessParams.set("areaId", areaId);
+    }
+
+    const areaQuery = readinessParams.toString() ? `?${readinessParams.toString()}` : "";
+    const summaryParams = new URLSearchParams();
+    if (period) {
+      summaryParams.set("period", period);
+    }
+    if (areaId) {
+      summaryParams.set("areaId", areaId);
+    }
+    const summaryQuery = summaryParams.toString() ? `?${summaryParams.toString()}` : "";
+    const summaryEndpoint = program
+      ? `/api/readiness/program/${encodeURIComponent(program)}${summaryQuery}`
+      : `/api/readiness/summary${summaryQuery}`;
+    const optionParams = new URLSearchParams();
+    if (program) {
+      optionParams.set("program", program);
+    }
+    const optionQuery = optionParams.toString() ? `?${optionParams.toString()}` : "";
+    const metricParams = new URLSearchParams();
+    if (program) {
+      metricParams.set("program", program);
+    }
+    if (period) {
+      metricParams.set("period", period);
+    }
+    if (areaId) {
+      metricParams.set("areaId", areaId);
+    }
+    const metricQuery = metricParams.toString() ? `?${metricParams.toString()}` : "";
 
     async function load() {
       try {
         setError(null);
-        const responses = await Promise.all([
-          fetch(summaryEndpoint),
-          fetch(`/api/readiness/areas${query}`),
-          fetch(`/api/readiness/trend${query}`),
-          fetch(`/api/readiness/forecast${query}`)
-        ]);
-        const payloads = await Promise.all(responses.map((response) => response.json()));
+        if (source === "indexeddb") {
+          const localDashboard = await getIndexedDbDashboardData(program, period, areaId);
+          if (!localDashboard.programs.length) {
+            throw new Error("No IndexedDB dataset available.");
+          }
 
-        if (responses.some((response) => !response.ok) || payloads.some((payload) => !payload.success)) {
-          const failed = payloads.find((payload) => !payload.success);
-          throw new Error(failed?.error ?? "Accreditation API unavailable");
+          setSummary(localDashboard.summary);
+          setAvailablePrograms(localDashboard.programs);
+          setAvailablePeriods(localDashboard.periods);
+          setAvailableAreas(localDashboard.areas.map((area) => ({ ...area, key: `${area.id}-${area.label}` })));
+          setAreas(localDashboard.areaRows);
+          setTrend(localDashboard.trend);
+          setForecast(localDashboard.forecast.forecast);
+          return;
         }
 
-        const [summaryPayload, areaPayload, trendPayload, forecastPayload] = payloads;
-        if (program) {
-          const scoped = summaryPayload.data?.summary;
-          setSummary(
-            scoped
-              ? {
-                  overallReadinessScore: scoped.readinessScore,
-                  readinessLabel: scoped.readinessLabel,
-                  riskLevel: scoped.riskLevel,
-                  totalRequirements: scoped.totalRequirements,
-                  completedRequirements: scoped.completedRequirements,
-                  pendingRequirements: scoped.pendingRequirements,
-                  averageRevisionCount: scoped.averageRevisionCount,
-                  averageCommentCount: scoped.averageCommentCount,
-                  averageAgingDays: scoped.averageAgingDays,
-                  warningFlags: scoped.warningFlags
-                }
-              : null
-          );
-        } else {
-          setSummary(summaryPayload.data);
+        const response = await fetch(`/api/readiness/dashboard${metricQuery}`);
+        const payload = await response.json();
+
+        if (!response.ok || !payload.success) {
+          throw new Error(payload?.error ?? "Accreditation API unavailable");
         }
-        setAvailablePrograms(programs);
-        setAvailablePeriods([]);
-        setAreas(areaPayload.data ?? []);
-        setTrend(trendPayload.data ?? []);
-        setForecast(forecastPayload.data?.forecast ?? []);
+
+        setSummary(payload.summary ?? null);
+        setAvailablePrograms(payload.programs ?? programs);
+        setAvailablePeriods(payload.periods ?? []);
+        setAvailableAreas(
+          Array.from(
+            new Map<string, AreaOption>(
+              (payload.areas ?? []).map((area: { id: string; label: string }) => {
+                const dedupeKey = `${area.id}::${area.label}`;
+                return [dedupeKey, { id: area.id, key: dedupeKey, label: area.label }];
+              })
+            ).values()
+          )
+        );
+        setAreas(payload.areaRows ?? []);
+        setTrend(payload.trend ?? []);
+        setForecast(payload.forecast?.forecast ?? []);
       } catch (loadError) {
         setSummary(null);
         setAreas([]);
         setTrend([]);
         setForecast([]);
+        setAvailableAreas([]);
         setError(loadError instanceof Error ? loadError.message : "Failed to load accreditation readiness data.");
       }
     }
 
     void load();
-  }, [program, period, programs]);
+  }, [source, program, period, areaId, programs]);
 
   if (!summary) {
     return (
@@ -111,7 +155,7 @@ export function DashboardView({ programs, dbMessage }: { programs: string[]; dbM
 
   return (
     <div className="stack">
-      <FilterBar programs={availablePrograms} periods={availablePeriods} />
+      <FilterBar programs={availablePrograms} periods={availablePeriods} areas={availableAreas} source={source} />
       <LegendModalTrigger />
       <div className="grid cards">
         <SummaryCard
@@ -142,8 +186,7 @@ export function DashboardView({ programs, dbMessage }: { programs: string[]; dbM
           <div className="kpi">Avg aging days: {summary.averageAgingDays}</div>
         </div>
         <p className="muted">Warnings: {summary.warningFlags.length ? summary.warningFlags.join(", ") : "None"}</p>
-        <p className="muted">Data source: API</p>
-        {period ? <p className="muted">Academic period filtering is not available in API mode.</p> : null}
+        <p className="muted">Data source: {source === "live" ? "API" : "IndexedDB"}</p>
       </div>
       <div className="grid equal">
         <TrendChart data={trend} />

@@ -3,9 +3,8 @@
 import { parseCsvFile } from "@/lib/csvParser";
 import { parseXlsxFile } from "@/lib/xlsxParser";
 import { aggregateAreaReadiness, aggregateInstitutionReadiness, aggregateProgramReadiness } from "@/lib/readinessEngine";
-import { buildTrendSeries } from "@/lib/aggregation";
-import { buildAcademicPeriodLabel, buildAcademicPeriodOrder } from "@/lib/dateUtils";
-import { predictNextPeriods } from "@/lib/forecasting";
+import { buildAcademicPeriodLabel, buildAcademicPeriodOrder, buildAcademicPeriodOrderFromLabel } from "@/lib/dateUtils";
+import { buildScopedForecast, buildScopedTrend } from "@/lib/readinessSeries";
 import type { RequirementRecordInput } from "@/models/dataset.types";
 
 const DB_NAME = "accreditation-readiness-local";
@@ -13,6 +12,8 @@ const DB_VERSION = 2;
 const BATCH_STORE = "import_batches";
 const RECORD_STORE = "requirement_records";
 const SNAPSHOT_STORE = "readiness_snapshots";
+let dbPromise: Promise<IDBDatabase> | null = null;
+let latestRecordsPromise: Promise<LocalRecord[]> | null = null;
 
 type LocalBatch = {
   id: number;
@@ -55,34 +56,38 @@ type LocalSnapshot = {
 };
 
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (db.objectStoreNames.contains(BATCH_STORE)) {
-        db.deleteObjectStore(BATCH_STORE);
-      }
-      if (db.objectStoreNames.contains(RECORD_STORE)) {
-        db.deleteObjectStore(RECORD_STORE);
-      }
-      if (db.objectStoreNames.contains(SNAPSHOT_STORE)) {
-        db.deleteObjectStore(SNAPSHOT_STORE);
-      }
-      if (!db.objectStoreNames.contains(BATCH_STORE)) {
-        db.createObjectStore(BATCH_STORE, { keyPath: "id" });
-      }
-      if (!db.objectStoreNames.contains(RECORD_STORE)) {
-        db.createObjectStore(RECORD_STORE, { keyPath: "id" });
-      }
-      if (!db.objectStoreNames.contains(SNAPSHOT_STORE)) {
-        db.createObjectStore(SNAPSHOT_STORE, { keyPath: "id" });
-      }
-    };
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (db.objectStoreNames.contains(BATCH_STORE)) {
+          db.deleteObjectStore(BATCH_STORE);
+        }
+        if (db.objectStoreNames.contains(RECORD_STORE)) {
+          db.deleteObjectStore(RECORD_STORE);
+        }
+        if (db.objectStoreNames.contains(SNAPSHOT_STORE)) {
+          db.deleteObjectStore(SNAPSHOT_STORE);
+        }
+        if (!db.objectStoreNames.contains(BATCH_STORE)) {
+          db.createObjectStore(BATCH_STORE, { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains(RECORD_STORE)) {
+          db.createObjectStore(RECORD_STORE, { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains(SNAPSHOT_STORE)) {
+          db.createObjectStore(SNAPSHOT_STORE, { keyPath: "id" });
+        }
+      };
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  return dbPromise;
 }
 
 function txComplete(transaction: IDBTransaction) {
@@ -109,6 +114,48 @@ async function putMany(storeName: string, values: unknown[]) {
   const store = tx.objectStore(storeName);
   values.forEach((value) => store.put(value));
   await txComplete(tx);
+}
+
+function getLatestBatchId(batches: LocalBatch[]) {
+  return batches.reduce<number | null>((latest, batch) => (latest == null || batch.id > latest ? batch.id : latest), null);
+}
+
+function getSourceBatchId(snapshot: LocalSnapshot) {
+  if (!snapshot.metadataJson) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(snapshot.metadataJson) as { sourceBatchId?: number };
+    return typeof parsed.sourceBatchId === "number" ? parsed.sourceBatchId : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getLatestIndexedDbRecords() {
+  if (!latestRecordsPromise) {
+    latestRecordsPromise = Promise.all([getAll<LocalBatch>(BATCH_STORE), getAll<LocalRecord>(RECORD_STORE)]).then(
+      ([batches, records]) => {
+        const latestBatchId = getLatestBatchId(batches);
+        if (latestBatchId == null) {
+          return [];
+        }
+        return records.filter((record) => record.importBatchId === latestBatchId);
+      }
+    );
+  }
+
+  return latestRecordsPromise;
+}
+
+async function getLatestIndexedDbSnapshots() {
+  const [batches, snapshots] = await Promise.all([getAll<LocalBatch>(BATCH_STORE), getAll<LocalSnapshot>(SNAPSHOT_STORE)]);
+  const latestBatchId = getLatestBatchId(batches);
+  if (latestBatchId == null) {
+    return [];
+  }
+  return snapshots.filter((snapshot) => getSourceBatchId(snapshot) === latestBatchId);
 }
 
 function normalizeRecords(records: Array<LocalRecord | RequirementRecordInput>) {
@@ -280,6 +327,7 @@ export async function saveImportToIndexedDb(file: File) {
   if (snapshots.length) {
     await putMany(SNAPSHOT_STORE, snapshots);
   }
+  latestRecordsPromise = null;
 
   window.dispatchEvent(new CustomEvent("indexeddb-import-complete"));
 
@@ -296,15 +344,75 @@ export async function getIndexedDbBatches() {
   return batches.sort((left, right) => right.id - left.id);
 }
 
+export async function getIndexedDbDashboardData(program?: string | null, period?: string | null, areaId?: string | null) {
+  const records = await getLatestIndexedDbRecords();
+  const summaryScoped = records.filter(
+    (record) => (!program || record.program === program) && matchesPeriod(record, period) && matchesArea(record, areaId)
+  );
+  const optionScoped = program ? records.filter((record) => record.program === program) : records;
+  const normalizedSummary = normalizeRecords(summaryScoped);
+  const summaryMetrics = program ? aggregateProgramReadiness(normalizedSummary) : aggregateInstitutionReadiness(normalizedSummary);
+
+  return {
+    programs: Array.from(new Set(records.map((record) => record.program))).sort((left, right) => left.localeCompare(right)),
+    periods: Array.from(new Set(optionScoped.map((record) => buildAcademicPeriodLabel(record.acadYear, record.semester)))).sort(
+      (left, right) => (buildAcademicPeriodOrderFromLabel(left) ?? 0) - (buildAcademicPeriodOrderFromLabel(right) ?? 0)
+    ),
+    areas: Array.from(
+      new Map(
+        optionScoped.map((record) => {
+          const id = record.areaId || record.areaCode;
+          const label = [record.areaCode, record.areaDescription].filter(Boolean).join(" - ") || id;
+          return [label, { id, label }];
+        })
+      ).values()
+    ).filter((entry): entry is { id: string; label: string } => Boolean(entry.id)),
+    summary: {
+      overallReadinessScore: summaryMetrics.readinessScore,
+      readinessLabel: summaryMetrics.readinessLabel,
+      riskLevel: summaryMetrics.riskLevel,
+      totalPrograms: new Set(records.map((record) => record.program)).size,
+      totalRequirements: summaryMetrics.totalRequirements,
+      completedRequirements: summaryMetrics.completedRequirements,
+      pendingRequirements: summaryMetrics.pendingRequirements,
+      averageRevisionCount: summaryMetrics.averageRevisionCount,
+      averageCommentCount: summaryMetrics.averageCommentCount,
+      averageAgingDays: summaryMetrics.averageAgingDays,
+      priorityLevel: summaryMetrics.priorityLevel,
+      warningFlags: summaryMetrics.warningFlags
+    },
+    areaRows: aggregateAreaReadiness(normalizedSummary).sort((left, right) => left.readinessScore - right.readinessScore),
+    trend: buildScopedTrend(records, { program, period, areaId }),
+    forecast: await buildScopedForecast(records, { program, period, areaId })
+  };
+}
+
 export async function getIndexedDbPrograms() {
-  const records = await getAll<LocalRecord>(RECORD_STORE);
+  const records = await getLatestIndexedDbRecords();
   return Array.from(new Set(records.map((record) => record.program))).sort((left, right) => left.localeCompare(right));
 }
 
 export async function getIndexedDbPeriods(program?: string | null) {
-  const records = await getAll<LocalRecord>(RECORD_STORE);
+  const records = await getLatestIndexedDbRecords();
   const scoped = program ? records.filter((record) => record.program === program) : records;
-  return Array.from(new Set(scoped.map((record) => buildAcademicPeriodLabel(record.acadYear, record.semester)))).sort();
+  return Array.from(new Set(scoped.map((record) => buildAcademicPeriodLabel(record.acadYear, record.semester)))).sort(
+    (left, right) => (buildAcademicPeriodOrderFromLabel(left) ?? 0) - (buildAcademicPeriodOrderFromLabel(right) ?? 0)
+  );
+}
+
+export async function getIndexedDbAreaOptions(program?: string | null) {
+  const records = await getLatestIndexedDbRecords();
+  const scoped = program ? records.filter((record) => record.program === program) : records;
+
+  return Array.from(
+    new Map(
+      scoped.map((record) => {
+        const id = record.areaId || record.areaCode;
+        const label = [record.areaCode, record.areaDescription].filter(Boolean).join(" - ") || id;
+        return [label, { id, label }];
+      })
+    ).values()
+  ).filter((entry): entry is { id: string; label: string } => Boolean(entry.id));
 }
 
 function matchesPeriod(record: LocalRecord, period?: string | null) {
@@ -314,9 +422,18 @@ function matchesPeriod(record: LocalRecord, period?: string | null) {
   return buildAcademicPeriodLabel(record.acadYear, record.semester) === period;
 }
 
-export async function getIndexedDbSummary(program?: string | null, period?: string | null) {
-  const records = await getAll<LocalRecord>(RECORD_STORE);
-  const scoped = records.filter((record) => (!program || record.program === program) && matchesPeriod(record, period));
+function matchesArea(record: LocalRecord, areaId?: string | null) {
+  if (!areaId) {
+    return true;
+  }
+  return record.areaId === areaId;
+}
+
+export async function getIndexedDbSummary(program?: string | null, period?: string | null, areaId?: string | null) {
+  const records = await getLatestIndexedDbRecords();
+  const scoped = records.filter(
+    (record) => (!program || record.program === program) && matchesPeriod(record, period) && matchesArea(record, areaId)
+  );
   const normalized = normalizeRecords(scoped);
   const metrics = program ? aggregateProgramReadiness(normalized) : aggregateInstitutionReadiness(normalized);
 
@@ -336,39 +453,20 @@ export async function getIndexedDbSummary(program?: string | null, period?: stri
   };
 }
 
-export async function getIndexedDbAreas(program?: string | null, period?: string | null) {
-  const records = await getAll<LocalRecord>(RECORD_STORE);
-  const scoped = records.filter((record) => (!program || record.program === program) && matchesPeriod(record, period));
+export async function getIndexedDbAreas(program?: string | null, period?: string | null, areaId?: string | null) {
+  const records = await getLatestIndexedDbRecords();
+  const scoped = records.filter(
+    (record) => (!program || record.program === program) && matchesPeriod(record, period) && matchesArea(record, areaId)
+  );
   return aggregateAreaReadiness(normalizeRecords(scoped)).sort((left, right) => left.readinessScore - right.readinessScore);
 }
 
-export async function getIndexedDbTrend(program?: string | null) {
-  const snapshots = await getAll<LocalSnapshot>(SNAPSHOT_STORE);
-  const filtered = snapshots
-    .filter((snapshot) => snapshot.areaId === null && (program ? snapshot.program === program : snapshot.program === null))
-    .map((snapshot) => ({
-      snapshotDate: new Date(snapshot.snapshotDate),
-      periodLabel: snapshot.periodLabel ?? undefined,
-      periodOrder: snapshot.periodOrder ?? undefined,
-      readinessScore: snapshot.readinessScore,
-      riskLevel: snapshot.riskLevel
-    }));
-
-  return buildTrendSeries(filtered);
+export async function getIndexedDbTrend(program?: string | null, period?: string | null, areaId?: string | null) {
+  const records = await getLatestIndexedDbRecords();
+  return buildScopedTrend(records, { program, period, areaId });
 }
 
-export async function getIndexedDbForecast(program?: string | null) {
-  const snapshots = await getAll<LocalSnapshot>(SNAPSHOT_STORE);
-  const filtered = snapshots
-    .filter((snapshot) => snapshot.areaId === null && (program ? snapshot.program === program : snapshot.program === null))
-    .map((snapshot) => ({
-      snapshotDate: new Date(snapshot.snapshotDate),
-      periodLabel: snapshot.periodLabel ?? undefined,
-      periodOrder: snapshot.periodOrder ?? undefined,
-      acadYear: snapshot.acadYear ?? undefined,
-      semester: snapshot.semester ?? undefined,
-      readinessScore: snapshot.readinessScore
-    }));
-
-  return predictNextPeriods(filtered);
+export async function getIndexedDbForecast(program?: string | null, period?: string | null, areaId?: string | null) {
+  const records = await getLatestIndexedDbRecords();
+  return buildScopedForecast(records, { program, period, areaId });
 }

@@ -1,5 +1,6 @@
 import { getDbInitError, getDbSafely } from "@/lib/db";
 import { apiError, apiSuccess } from "@/lib/api";
+import { getLatestBatchRecords } from "@/lib/serverReadiness";
 
 export const runtime = "nodejs";
 
@@ -10,14 +11,13 @@ export async function GET() {
   }
 
   try {
-    const programs = await db.requirementRecord.findMany({
-      distinct: ["program"],
-      select: { program: true },
-      orderBy: { program: "asc" }
-    });
+    const records = await getLatestBatchRecords();
+    const programs = Array.from(new Set(records.map((record) => record.program))).sort((left, right) =>
+      left.localeCompare(right)
+    );
 
     return apiSuccess({
-      data: programs.map((entry) => entry.program)
+      data: programs
     });
   } catch (error) {
     return apiError("Failed to load readiness programs.", 500, error instanceof Error ? error.message : error);

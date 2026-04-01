@@ -7,6 +7,7 @@ import { ReadinessTable } from "@/components/ReadinessTable";
 import { RiskBadge } from "@/components/RiskBadge";
 import { SummaryCard } from "@/components/SummaryCard";
 import { TrendChart } from "@/components/TrendChart";
+import { getIndexedDbAreas, getIndexedDbForecast, getIndexedDbSummary, getIndexedDbTrend } from "@/lib/indexedDb";
 import type { ReadinessAreaRow, ReadinessMetrics } from "@/models/readiness.types";
 
 type TrendPoint = { period: string; score: number; riskLevel: string };
@@ -25,31 +26,62 @@ export function ProgramDashboardView({ program }: { program: string }) {
     async function load() {
       try {
         setError(null);
-        const responses = await Promise.all([
-          fetch(`/api/readiness/program/${encoded}`),
-          fetch(`/api/readiness/trend?program=${encoded}`),
-          fetch(`/api/readiness/forecast?program=${encoded}`)
+        const localSummary = await getIndexedDbSummary(program);
+        const [localAreas, localTrend, localForecast] = await Promise.all([
+          getIndexedDbAreas(program),
+          getIndexedDbTrend(program),
+          getIndexedDbForecast(program)
         ]);
-        const [programPayload, trendPayload, forecastPayload] = await Promise.all(
-          responses.map((response) => response.json())
-        );
 
-        if (responses.some((response) => !response.ok) || !programPayload.success || !trendPayload.success || !forecastPayload.success) {
-          throw new Error(
-            programPayload.error ?? trendPayload.error ?? forecastPayload.error ?? "Accreditation API unavailable"
-          );
-        }
-
-        setSummary(programPayload.data?.summary ?? null);
-        setAreas(programPayload.data?.areas ?? []);
-        setTrend(trendPayload.data ?? []);
-        setForecast(forecastPayload.data?.forecast ?? []);
+        setSummary({
+          readinessScore: localSummary.overallReadinessScore,
+          readinessLabel: localSummary.readinessLabel,
+          riskLevel: localSummary.riskLevel as ReadinessMetrics["riskLevel"],
+          priorityLevel: localSummary.priorityLevel as ReadinessMetrics["priorityLevel"],
+          warningFlags: localSummary.warningFlags,
+          totalRequirements: localSummary.totalRequirements,
+          completedRequirements: localSummary.completedRequirements,
+          pendingRequirements: localSummary.pendingRequirements,
+          averageRevisionCount: localSummary.averageRevisionCount,
+          averageCommentCount: localSummary.averageCommentCount,
+          averageAgingDays: localSummary.averageAgingDays
+        });
+        setAreas(localAreas);
+        setTrend(localTrend);
+        setForecast(localForecast.forecast);
       } catch (loadError) {
-        setSummary(null);
-        setAreas([]);
-        setTrend([]);
-        setForecast([]);
-        setError(loadError instanceof Error ? loadError.message : "Failed to load program readiness data.");
+        try {
+          const responses = await Promise.all([
+            fetch(`/api/readiness/program/${encoded}`),
+            fetch(`/api/readiness/trend?program=${encoded}`),
+            fetch(`/api/readiness/forecast?program=${encoded}`)
+          ]);
+          const [programPayload, trendPayload, forecastPayload] = await Promise.all(
+            responses.map((response) => response.json())
+          );
+
+          if (
+            responses.some((response) => !response.ok) ||
+            !programPayload.success ||
+            !trendPayload.success ||
+            !forecastPayload.success
+          ) {
+            throw new Error(
+              programPayload.error ?? trendPayload.error ?? forecastPayload.error ?? "Accreditation API unavailable"
+            );
+          }
+
+          setSummary(programPayload.data?.summary ?? null);
+          setAreas(programPayload.data?.areas ?? []);
+          setTrend(trendPayload.data ?? []);
+          setForecast(forecastPayload.data?.forecast ?? []);
+        } catch (apiError) {
+          setSummary(null);
+          setAreas([]);
+          setTrend([]);
+          setForecast([]);
+          setError(apiError instanceof Error ? apiError.message : "Failed to load program readiness data.");
+        }
       }
     }
 
@@ -83,7 +115,7 @@ export function ProgramDashboardView({ program }: { program: string }) {
           <div className="kpi">Avg revisions: {summary.averageRevisionCount}</div>
           <div className="kpi">Avg comments: {summary.averageCommentCount}</div>
         </div>
-        <p className="muted">Data source: API</p>
+        <p className="muted">Data source: IndexedDB or API fallback</p>
       </div>
       <div className="grid equal">
         <TrendChart data={trend} />

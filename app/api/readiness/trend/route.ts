@@ -1,6 +1,7 @@
 import { getDbInitError, getDbSafely } from "@/lib/db";
 import { apiError, apiSuccess } from "@/lib/api";
 import { buildTrendSeries, toChartContract } from "@/lib/aggregation";
+import { getLatestBatchScopedPeriodSnapshots } from "@/lib/serverReadiness";
 
 export const runtime = "nodejs";
 
@@ -12,17 +13,11 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const program = searchParams.get("program");
+  const areaId = searchParams.get("areaId");
+  const period = searchParams.get("period");
 
   try {
-    const snapshots = await db.readinessSnapshot.findMany({
-      where: {
-        program: program ?? null,
-        areaId: null
-      },
-      orderBy: { snapshotDate: "asc" }
-    });
-
-    const series = buildTrendSeries(snapshots);
+    const series = buildTrendSeries(await getLatestBatchScopedPeriodSnapshots({ program, period, areaId }));
 
     return apiSuccess({
       data: series,

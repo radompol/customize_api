@@ -31,15 +31,27 @@ function parseAcademicYearStart(acadYear: string) {
   return match ? Number(match[1]) : 0;
 }
 
+function parseAcademicYearBounds(acadYear: string) {
+  const match = acadYear.match(/(\d{4})\D+(\d{4})/);
+  const startYear = match ? Number(match[1]) : parseAcademicYearStart(acadYear);
+  const endYear = match ? Number(match[2]) : startYear + 1;
+  return { startYear, endYear };
+}
+
 export function normalizeSemesterLabel(semester: string) {
+  const normalized = semester.trim().toLowerCase();
+  if (normalized.includes("first") || normalized === "1" || normalized === "1st") return "1st";
+  if (normalized.includes("second") || normalized === "2" || normalized === "2nd") return "2nd";
+  if (normalized.includes("third") || normalized === "3" || normalized === "3rd") return "3rd";
+  if (normalized.includes("summer")) return "Summer";
   return semester.trim();
 }
 
 export function getSemesterOrder(semester: string) {
   const normalized = semester.trim().toLowerCase();
-  if (normalized.includes("1")) return 1;
-  if (normalized.includes("2")) return 2;
-  if (normalized.includes("3")) return 3;
+  if (normalized.includes("1") || normalized.includes("first")) return 1;
+  if (normalized.includes("2") || normalized.includes("second")) return 2;
+  if (normalized.includes("3") || normalized.includes("third")) return 3;
   if (normalized.includes("summer")) return 3;
   return 9;
 }
@@ -52,11 +64,58 @@ export function buildAcademicPeriodOrder(acadYear: string, semester: string) {
   return parseAcademicYearStart(acadYear) * 10 + getSemesterOrder(semester);
 }
 
+export function buildAcademicPeriodDate(acadYear: string, semester: string) {
+  const { startYear, endYear } = parseAcademicYearBounds(acadYear);
+  const order = getSemesterOrder(semester);
+
+  if (order === 1) {
+    return new Date(Date.UTC(startYear, 7, 1));
+  }
+
+  if (order === 2) {
+    return new Date(Date.UTC(endYear, 0, 1));
+  }
+
+  return new Date(Date.UTC(endYear, 5, 1));
+}
+
+export function parseAcademicPeriodLabel(label: string) {
+  const match = label.trim().match(/^(\d{4}\D+\d{4})\s+(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    acadYear: match[1].trim(),
+    semester: match[2].trim()
+  };
+}
+
+export function buildAcademicPeriodOrderFromLabel(label: string) {
+  const parsed = parseAcademicPeriodLabel(label);
+  if (!parsed) {
+    return null;
+  }
+
+  return buildAcademicPeriodOrder(parsed.acadYear, parsed.semester);
+}
+
+export function resolvePeriodDate(value: string) {
+  const parsedAcademic = parseAcademicPeriodLabel(value);
+  if (parsedAcademic) {
+    return buildAcademicPeriodDate(parsedAcademic.acadYear, parsedAcademic.semester);
+  }
+
+  if (/^\d{4}-\d{2}$/.test(value)) {
+    return new Date(`${value}-01T00:00:00.000Z`);
+  }
+
+  return new Date();
+}
+
 export function getNextAcademicPeriod(acadYear: string, semester: string) {
   const order = getSemesterOrder(semester);
-  const yearMatch = acadYear.match(/(\d{4})\D+(\d{4})/);
-  const startYear = yearMatch ? Number(yearMatch[1]) : parseAcademicYearStart(acadYear);
-  const endYear = yearMatch ? Number(yearMatch[2]) : startYear + 1;
+  const { startYear, endYear } = parseAcademicYearBounds(acadYear);
 
   if (order === 1) {
     return {

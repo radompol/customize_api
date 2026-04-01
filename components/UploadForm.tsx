@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { saveImportToIndexedDb } from "@/lib/indexedDb";
 
 export function UploadForm() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
   async function handleSubmit(formData: FormData) {
-    setStatus("Uploading dataset to the API...");
+    setStatus("Uploading dataset to the API and caching locally...");
     setError("");
 
     const file = formData.get("file");
@@ -16,6 +17,7 @@ export function UploadForm() {
       return;
     }
 
+    const localResult = await saveImportToIndexedDb(file);
     const response = await fetch("/api/import", {
       method: "POST",
       body: formData
@@ -25,7 +27,7 @@ export function UploadForm() {
       throw new Error(result?.error ?? "Dataset import failed.");
     }
     setStatus(
-      `Imported ${result.rowsImported} rows in batch ${result.batchId}; created ${result.snapshotsCreated} snapshots.`
+      `Imported ${result.rowsImported} rows in API batch ${result.batchId}; cached ${localResult.rowsImported} rows locally.`
     );
     if (result.errors.length) {
       setError(`Imported with row warnings: ${result.errors.slice(0, 3).join(" | ")}`);
