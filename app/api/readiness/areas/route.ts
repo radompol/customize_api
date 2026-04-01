@@ -13,13 +13,17 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const program = searchParams.get("program");
 
-  const records = await db.requirementRecord.findMany({
-    where: program ? { program } : undefined
-  });
+  try {
+    const records = await db.requirementRecord.findMany({
+      where: program ? { program } : undefined
+    });
 
-  const areas = aggregateAreaReadiness(records.map(toLightweightRecord));
+    const areas = aggregateAreaReadiness(records.map(toLightweightRecord));
 
-  return apiSuccess({
-    data: areas.sort((left, right) => left.readinessScore - right.readinessScore)
-  });
+    return apiSuccess({
+      data: areas.sort((left, right) => left.readinessScore - right.readinessScore)
+    });
+  } catch (error) {
+    return apiError("Failed to load readiness areas.", 500, error instanceof Error ? error.message : error);
+  }
 }

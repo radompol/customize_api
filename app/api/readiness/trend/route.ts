@@ -13,18 +13,22 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const program = searchParams.get("program");
 
-  const snapshots = await db.readinessSnapshot.findMany({
-    where: {
-      program: program ?? null,
-      areaId: null
-    },
-    orderBy: { snapshotDate: "asc" }
-  });
+  try {
+    const snapshots = await db.readinessSnapshot.findMany({
+      where: {
+        program: program ?? null,
+        areaId: null
+      },
+      orderBy: { snapshotDate: "asc" }
+    });
 
-  const series = buildTrendSeries(snapshots);
+    const series = buildTrendSeries(snapshots);
 
-  return apiSuccess({
-    data: series,
-    chart: toChartContract(series)
-  });
+    return apiSuccess({
+      data: series,
+      chart: toChartContract(series)
+    });
+  } catch (error) {
+    return apiError("Failed to load readiness trend.", 500, error instanceof Error ? error.message : error);
+  }
 }
