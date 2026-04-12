@@ -3,6 +3,18 @@
 ## `POST /api/import`
 Uploads `.csv` or `.xlsx`, validates required columns, persists `import_batches` and `requirement_records`, then creates `readiness_snapshots`.
 
+## `POST /api/r2/upload-url`
+Creates a presigned `PUT` URL for direct browser-to-R2 uploads. Accepts `fileName`, `contentType`, optional `folder`, optional `key`, and optional `expiresInSeconds`.
+
+## `POST /api/r2/upload`
+Accepts multipart `file` uploads on the server, then stores the file in Cloudflare R2. Supports optional `folder` or explicit `key`.
+
+## `DELETE /api/r2/object`
+Deletes an R2 object by `key`.
+
+## `PUT /api/r2/object`
+Renames an R2 object by copying it to `newKey` and deleting the original `key`.
+
 ## `GET /api/readiness/summary`
 Institution-wide readiness summary for summary cards and dashboard widgets.
 

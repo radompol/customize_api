@@ -1,0 +1,401 @@
+CODEX INSTRUCTION
+Project: Cloudflare R2 Storage Integration
+Integration Target: AXZTech Accreditation R2 API
+Mode: Consume as external callable REST API
+
+Use this instruction when working inside another system that needs file upload,
+rename, or delete behavior through the Accreditation project.
+
+================================================================================
+1. PRIMARY GOAL
+================================================================================
+
+Do not implement separate Cloudflare R2 signing and object-management logic in
+the other system if this Accreditation project is already available.
+
+Treat this project as the external storage API service for:
+- direct browser upload signing
+- server-side multipart upload
+- object delete
+- object rename
+
+The other system should call these endpoints over HTTP and store the returned
+`key` or `publicUrl` as its file reference.
+
+================================================================================
+2. BASE URL CONFIGURATION
+================================================================================
+
+Always read the storage API base URL from environment configuration.
+
+Expected env variable:
+- `ACCREDITATION_STORAGE_API_BASE_URL`
+
+Example:
+- `ACCREDITATION_STORAGE_API_BASE_URL=http://localhost:3000`
+
+Do not hardcode local or production URLs in components.
+
+================================================================================
+3. AVAILABLE ENDPOINTS
+================================================================================
+
+Use these endpoints from the AXZTech Accreditation API:
+
+A. Create presigned upload URL
+- `POST /api/r2/upload-url`
+
+B. Upload file through server
+- `POST /api/r2/upload`
+
+C. Delete object
+- `DELETE /api/r2/object`
+
+D. Rename object
+- `PUT /api/r2/object`
+
+================================================================================
+4. ENDPOINT PURPOSES
+================================================================================
+
+`POST /api/r2/upload-url`
+- creates a presigned `PUT` upload URL
+- best for browser direct uploads
+- returns the final object `key`
+- returns optional `publicUrl`
+
+`POST /api/r2/upload`
+- accepts multipart form data with `file`
+- uploads through the server to R2
+- best when the other system cannot upload directly from the client
+
+`DELETE /api/r2/object`
+- deletes an existing R2 object by `key`
+
+`PUT /api/r2/object`
+- renames an existing object
+- implemented internally as copy + delete
+- use this when the object path must change
+
+Important:
+- there is no partial in-place file update operation
+- replacing a file means uploading a new file, usually to a new or same key
+- renaming is not a native R2 rename; it is copy then delete
+
+================================================================================
+5. REQUEST CONTRACTS
+================================================================================
+
+A. `POST /api/r2/upload-url`
+
+Request JSON:
+```json
+{
+  "fileName": "photo.jpg",
+  "contentType": "image/jpeg",
+  "folder": "uploads/profile",
+  "expiresInSeconds": 300
+}
+```
+
+Optional fields:
+- `folder`
+- `key`
+- `expiresInSeconds`
+
+Notes:
+- if `key` is omitted, the API generates one
+- if `folder` is provided, the generated key is placed under that folder
+
+B. `POST /api/r2/upload`
+
+Multipart form data:
+- `file` required
+- `folder` optional
+- `key` optional
+
+C. `DELETE /api/r2/object`
+
+Request JSON:
+```json
+{
+  "key": "uploads/profile/photo-123.jpg"
+}
+```
+
+D. `PUT /api/r2/object`
+
+Request JSON:
+```json
+{
+  "key": "uploads/profile/photo-123.jpg",
+  "newKey": "uploads/archive/photo-123.jpg"
+}
+```
+
+================================================================================
+6. RESPONSE SHAPES
+================================================================================
+
+Success responses use a consistent envelope:
+
+```json
+{
+  "success": true,
+  "data": {}
+}
+```
+
+Example presigned upload response:
+```json
+{
+  "success": true,
+  "data": {
+    "key": "uploads/profile/photo-uuid.jpg",
+    "bucket": "website-images01",
+    "uploadUrl": "https://...",
+    "expiresInSeconds": 300,
+    "publicUrl": "https://...",
+    "method": "PUT",
+    "headers": {
+      "Content-Type": "image/jpeg"
+    }
+  }
+}
+```
+
+Example server upload response:
+```json
+{
+  "success": true,
+  "data": {
+    "key": "uploads/profile/photo-uuid.jpg",
+    "bucket": "website-images01",
+    "etag": "\"...\"",
+    "publicUrl": "https://...",
+    "fileName": "photo.jpg",
+    "contentType": "image/jpeg",
+    "size": 12345
+  }
+}
+```
+
+Example delete response:
+```json
+{
+  "success": true,
+  "data": {
+    "key": "uploads/profile/photo-123.jpg",
+    "bucket": "website-images01",
+    "deleted": true
+  }
+}
+```
+
+Example rename response:
+```json
+{
+  "success": true,
+  "data": {
+    "fromKey": "uploads/profile/photo-123.jpg",
+    "key": "uploads/archive/photo-123.jpg",
+    "bucket": "website-images01",
+    "publicUrl": "https://..."
+  }
+}
+```
+
+Error responses follow:
+```json
+{
+  "success": false,
+  "error": "Message",
+  "details": {}
+}
+```
+
+================================================================================
+7. PREFERRED INTEGRATION RULES
+================================================================================
+
+When another system needs uploads:
+
+Preferred strategy:
+1. call `POST /api/r2/upload-url`
+2. upload the raw file bytes directly to `uploadUrl`
+3. save `data.key` in the other system's database
+4. optionally display `data.publicUrl` if public access is enabled
+
+Fallback strategy:
+1. send multipart form data to `POST /api/r2/upload`
+2. save `data.key` and optional `data.publicUrl`
+
+When another system needs delete:
+1. call `DELETE /api/r2/object`
+2. remove the stored object key from the other system's database only after
+   successful deletion or according to the system's own soft-delete rules
+
+When another system needs rename:
+1. call `PUT /api/r2/object`
+2. update the stored key reference to `data.key`
+3. update any public URL references to `data.publicUrl`
+
+================================================================================
+8. CLIENT IMPLEMENTATION RULES
+================================================================================
+
+In the consuming system, structure the integration like this:
+
+- `lib/storageApi.ts`
+  Purpose:
+  - base URL handling
+  - fetch wrappers
+  - response parsing
+  - error normalization
+
+- `types/storage.ts`
+  Purpose:
+  - request/response contracts
+  - object metadata types
+
+- `components/uploads/*`
+  Purpose:
+  - upload buttons
+  - progress UI
+  - file preview components
+  - delete/rename controls
+
+Do not scatter raw fetch logic across multiple unrelated components.
+
+================================================================================
+9. REQUIRED FETCH WRAPPERS
+================================================================================
+
+Create service functions similar to:
+
+- `createR2UploadUrl(input)`
+- `uploadFileViaApi(formData)`
+- `deleteR2Object(key)`
+- `renameR2Object(key, newKey)`
+
+If direct upload is used, also add:
+- `uploadFileToPresignedUrl(uploadUrl, file, headers)`
+
+Each wrapper must:
+- check `response.ok`
+- parse JSON safely
+- verify `success === true`
+- throw structured errors on failure
+
+================================================================================
+10. EXAMPLE USAGE
+================================================================================
+
+Example create signed upload request:
+
+```ts
+const response = await fetch(
+  `${process.env.ACCREDITATION_STORAGE_API_BASE_URL}/api/r2/upload-url`,
+  {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fileName: file.name,
+      contentType: file.type || "application/octet-stream",
+      folder: "uploads/documents"
+    })
+  }
+);
+```
+
+Example direct upload step:
+
+```ts
+await fetch(uploadUrl, {
+  method: "PUT",
+  headers: {
+    "Content-Type": file.type || "application/octet-stream"
+  },
+  body: file
+});
+```
+
+Example server upload:
+
+```ts
+const formData = new FormData();
+formData.append("file", file);
+formData.append("folder", "uploads/documents");
+
+await fetch(`${baseUrl}/api/r2/upload`, {
+  method: "POST",
+  body: formData
+});
+```
+
+Example delete:
+
+```ts
+await fetch(`${baseUrl}/api/r2/object`, {
+  method: "DELETE",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ key })
+});
+```
+
+Example rename:
+
+```ts
+await fetch(`${baseUrl}/api/r2/object`, {
+  method: "PUT",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    key,
+    newKey
+  })
+});
+```
+
+================================================================================
+11. DATA STORAGE RULES IN THE OTHER SYSTEM
+================================================================================
+
+The other system should store at minimum:
+- `key`
+- original file name
+- content type if relevant
+- file size if relevant
+- `publicUrl` only if the application truly needs a public-facing URL
+
+Prefer `key` as the durable reference.
+
+Reason:
+- `key` works for rename, delete, and future signed-download flows
+- `publicUrl` may change if CDN or domain configuration changes
+
+================================================================================
+12. DO NOT
+================================================================================
+
+Do not:
+- reimplement presigned URL generation in the other system unless explicitly
+  required
+- hardcode Cloudflare credentials into the consuming project
+- treat rename as an in-place metadata update
+- assume `publicUrl` is always present
+- store only `publicUrl` without the underlying `key`
+- silently ignore failed delete or rename requests
+
+================================================================================
+13. SUCCESS CRITERIA
+================================================================================
+
+The integration is correct only if:
+
+- file upload works through either direct or server upload
+- the consuming system stores the returned `key`
+- delete calls remove the intended object by `key`
+- rename calls update the key reference everywhere needed
+- response failures are surfaced clearly to users or logs
+- Cloudflare credentials remain only in the Accreditation API service
+
