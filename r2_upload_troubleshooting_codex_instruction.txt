@@ -1,0 +1,185 @@
+CODEX INSTRUCTION
+Project: Cloudflare R2 Upload Troubleshooting
+Integration Target: AXZTech Accreditation R2 API
+Mode: Diagnose `/api/r2/upload` failures from consuming systems
+
+Use this instruction when another system is calling:
+
+- `POST /api/r2/upload`
+
+and receives errors such as:
+
+- `400 Bad Request`
+- `Invalid upload metadata.`
+- `Failed to save product`
+- `StorageApiError: Invalid upload metadata.`
+
+================================================================================
+1. PRIMARY GOAL
+================================================================================
+
+When the consuming app calls `POST /api/r2/upload` and gets:
+
+```json
+{
+  "success": false,
+  "error": "Invalid upload metadata."
+}
+```
+
+do not assume the frontend file picker or submit handler is the root cause.
+
+First check whether the Accreditation API route is rejecting optional form
+fields incorrectly.
+
+================================================================================
+2. KNOWN FAILURE MODE
+================================================================================
+
+The current upload route may validate upload metadata like this:
+
+- read `folder` using `formData.get("folder")`
+- read `key` using `formData.get("key")`
+- validate them as optional strings
+
+Important:
+- `FormData.get(...)` returns `null` when a field is missing
+- Zod `optional()` accepts `undefined`, not `null`
+
+This means a request can fail even when the consuming app is correct and only
+sends:
+
+- `file`
+
+If `folder` and `key` are omitted, the API may still reject the request because
+those missing values become `null`.
+
+================================================================================
+3. WHAT THIS ERROR USUALLY MEANS
+================================================================================
+
+If the error is specifically:
+- `Invalid upload metadata.`
+
+the likely cause is:
+- the server route is treating missing optional fields as invalid input
+
+It does not usually mean:
+- the selected file is broken
+- the React form is broken
+- the storage API base URL is wrong
+- the R2 credentials are wrong
+
+================================================================================
+4. EXPECTED CLIENT REQUEST
+================================================================================
+
+The client should send multipart form data like:
+
+```ts
+const formData = new FormData();
+formData.append("file", file);
+
+if (folder) {
+  formData.append("folder", folder);
+}
+
+if (key) {
+  formData.append("key", key);
+}
+```
+
+This is valid behavior.
+
+The client does not need to send empty strings for optional values.
+
+================================================================================
+5. REQUIRED SERVER FIX
+================================================================================
+
+In the Accreditation API route for:
+
+- `POST /api/r2/upload`
+
+normalize missing form fields before validation.
+
+Expected behavior:
+- if `folder` is missing, convert it to `undefined`
+- if `key` is missing, convert it to `undefined`
+
+Correct normalization pattern:
+
+```ts
+const parsed = uploadMetadataSchema.safeParse({
+  folder: formData.get("folder") ?? undefined,
+  key: formData.get("key") ?? undefined
+});
+```
+
+This prevents `null` from failing optional-string validation.
+
+================================================================================
+6. HOW TO INTERPRET FRONTEND LOGS
+================================================================================
+
+Example symptom:
+- browser console shows `POST /api/r2/upload 400 (Bad Request)`
+- app throws `StorageApiError: Invalid upload metadata.`
+
+Interpretation:
+- the request reached the Accreditation API successfully
+- this is not a browser-to-R2 CORS issue
+- this is not a presigned URL failure
+- the route rejected the metadata before upload started
+
+================================================================================
+7. DIFFERENCE FROM THE PREVIOUS CORS ERROR
+================================================================================
+
+Do not confuse this error with the older direct-upload failure.
+
+Old direct-upload failure:
+- browser `PUT` to R2 bucket URL
+- blocked by bucket CORS
+- usually shows `Failed to fetch` and `No 'Access-Control-Allow-Origin' header`
+
+This new failure:
+- browser `POST` to Accreditation API `/api/r2/upload`
+- response is `400 Bad Request`
+- error says `Invalid upload metadata.`
+
+Meaning:
+- the app already moved away from direct browser upload
+- now the failure is inside the Accreditation API route validation
+
+================================================================================
+8. CODING RULE FOR CODEX
+================================================================================
+
+When asked to fix this issue:
+
+1. inspect the `POST /api/r2/upload` route first
+2. check how `folder` and `key` are read from `FormData`
+3. verify whether missing values remain `null`
+4. normalize missing values to `undefined`
+5. keep `file` required
+6. do not force the consuming app to send dummy values for optional fields
+
+Do not:
+- blame the frontend first
+- require empty string placeholders for `folder` or `key`
+- reintroduce direct presigned uploads just to bypass the bug
+
+================================================================================
+9. SUCCESS CRITERIA
+================================================================================
+
+The fix is correct only if:
+
+- uploading with only `file` succeeds
+- uploading with `file + folder` succeeds
+- uploading with `file + key` succeeds
+- the route no longer returns `Invalid upload metadata.` for omitted optional
+  fields
+- the consuming app does not need to send fake placeholder values
+

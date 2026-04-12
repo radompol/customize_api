@@ -20,8 +20,8 @@ export async function POST(request: Request) {
     }
 
     const parsed = uploadMetadataSchema.safeParse({
-      folder: formData.get("folder"),
-      key: formData.get("key")
+      folder: formData.get("folder") ?? undefined,
+      key: formData.get("key") ?? undefined
     });
 
     if (!parsed.success) {

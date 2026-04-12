@@ -1,0 +1,266 @@
+CODEX INSTRUCTION
+Project: Cloudflare R2 Server Upload Integration
+Integration Target: AXZTech Accreditation R2 API
+Mode: Consume server-side upload endpoint instead of direct presigned uploads
+
+Use this instruction when working inside another system that currently uses
+presigned browser uploads and needs to switch to the safer fallback flow:
+
+- `POST /api/r2/upload`
+
+This is the preferred fallback when direct-to-R2 browser uploads are blocked by
+bucket CORS.
+
+================================================================================
+1. PRIMARY GOAL
+================================================================================
+
+Do not upload directly from the browser to the Cloudflare R2 bucket URL.
+
+Instead:
+- send the file from the other app to the Accreditation API
+- let the Accreditation API upload the file to R2 server-to-server
+- store the returned `key` and optional `publicUrl`
+
+This avoids browser preflight failures against the R2 bucket domain.
+
+================================================================================
+2. WHY THIS CHANGE IS NEEDED
+================================================================================
+
+If the other system currently does this:
+1. calls `POST /api/r2/upload-url`
+2. receives `uploadUrl`
+3. performs browser `PUT` directly to Cloudflare R2
+
+then uploads may fail with errors like:
+- `Failed to fetch`
+- `blocked by CORS policy`
+- `No 'Access-Control-Allow-Origin' header`
+- `preflight request doesn't pass access control check`
+
+That failure happens because the browser is talking directly to the R2 bucket
+domain, and the bucket must have correct CORS rules.
+
+To avoid that dependency, switch the other system to:
+- `POST /api/r2/upload`
+
+With this flow:
+- the browser only talks to the Accreditation API
+- the Accreditation API talks to R2 from the server
+- browser CORS against the R2 bucket is no longer part of the upload path
+
+================================================================================
+3. BASE URL CONFIGURATION
+================================================================================
+
+Always read the API base URL from environment configuration.
+
+Expected env variable:
+- `ACCREDITATION_STORAGE_API_BASE_URL`
+
+Example:
+```env
+ACCREDITATION_STORAGE_API_BASE_URL=http://localhost:3000
+```
+
+If deployed:
+```env
+ACCREDITATION_STORAGE_API_BASE_URL=https://your-accreditation-api-domain.com
+```
+
+================================================================================
+4. ENDPOINT TO USE
+================================================================================
+
+Use:
+- `POST /api/r2/upload`
+
+Do not use:
+- `POST /api/r2/upload-url`
+- direct browser `PUT` upload to R2 bucket URLs
+
+Keep using these object-management endpoints if needed:
+- `DELETE /api/r2/object`
+- `PUT /api/r2/object`
+
+================================================================================
+5. REQUEST CONTRACT
+================================================================================
+
+`POST /api/r2/upload` expects multipart form data.
+
+Fields:
+- `file` required
+- `folder` optional
+- `key` optional
+
+Example:
+```ts
+const formData = new FormData();
+formData.append("file", file);
+formData.append("folder", "uploads/product-inventory/bakester");
+```
+
+Then:
+```ts
+await fetch(`${baseUrl}/api/r2/upload`, {
+  method: "POST",
+  body: formData
+});
+```
+
+================================================================================
+6. RESPONSE SHAPE
+================================================================================
+
+Success response:
+```json
+{
+  "success": true,
+  "data": {
+    "key": "uploads/product-inventory/bakester/photo-uuid.jpg",
+    "bucket": "website-images01",
+    "etag": "\"...\"",
+    "publicUrl": "https://...",
+    "fileName": "photo.jpg",
+    "contentType": "image/jpeg",
+    "size": 12345
+  }
+}
+```
+
+Error response:
+```json
+{
+  "success": false,
+  "error": "Message",
+  "details": {}
+}
+```
+
+================================================================================
+7. REQUIRED CODE CHANGE
+================================================================================
+
+In the other system:
+
+Remove or stop using logic similar to:
+- `createR2UploadUrl(...)`
+- `uploadFileToPresignedUrl(...)`
+- any direct `PUT` request to a Cloudflare R2 signed URL
+
+Replace it with:
+- one helper that sends `FormData` to `POST /api/r2/upload`
+
+Recommended service wrapper:
+- `uploadFileViaApi(file, folder?, key?)`
+
+Suggested implementation:
+```ts
+export async function uploadFileViaApi(file: File, folder?: string, key?: string) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  if (folder) {
+    formData.append("folder", folder);
+  }
+
+  if (key) {
+    formData.append("key", key);
+  }
+
+  const response = await fetch(`${baseUrl}/api/r2/upload`, {
+    method: "POST",
+    body: formData
+  });
+
+  const result = await response.json();
+
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.error ?? "File upload failed.");
+  }
+
+  return result.data;
+}
+```
+
+================================================================================
+8. UI FLOW EXPECTATION
+================================================================================
+
+The upload flow in the consuming app should become:
+
+1. user selects file
+2. app creates `FormData`
+3. app sends file to `POST /api/r2/upload`
+4. app receives `key`, `publicUrl`, `fileName`, `contentType`, `size`
+5. app stores the returned `key` in its own database or form payload
+
+Do not:
+1. request presigned URL
+2. upload directly to R2
+3. depend on bucket CORS from the browser
+
+================================================================================
+9. DATA STORAGE RULES
+================================================================================
+
+The consuming system should store at minimum:
+- `key`
+- original file name
+- content type if relevant
+- file size if relevant
+
+Optional:
+- `publicUrl`
+
+Prefer storing `key` as the durable object reference.
+
+================================================================================
+10. WHEN TO KEEP DELETE AND RENAME
+================================================================================
+
+Even after switching uploads to `/api/r2/upload`, continue using:
+- `DELETE /api/r2/object`
+- `PUT /api/r2/object`
+
+Examples:
+- delete a product image by `key`
+- rename or move an object path by `key` and `newKey`
+
+================================================================================
+11. CORS NOTE
+================================================================================
+
+Switching to `/api/r2/upload` removes the browser-to-bucket CORS dependency.
+
+This means:
+- the browser only needs to reach the Accreditation API
+- the R2 bucket CORS config is no longer required for normal uploads in the
+  consuming app
+
+The Accreditation API itself still needs to allow the consuming frontend origin.
+
+================================================================================
+12. DO NOT
+================================================================================
+
+Do not:
+- put R2 secret credentials in the other app
+- keep both direct-upload and server-upload flows unless explicitly required
+- use the bucket signed URL in browser code after this migration
+- store only `publicUrl` without the underlying `key`
+
+================================================================================
+13. SUCCESS CRITERIA
+================================================================================
+
+The migration is correct only if:
+
+- the other app no longer performs direct `PUT` uploads to R2 bucket URLs
+- uploads are sent to `POST /api/r2/upload`
+- the upload succeeds from `http://localhost:5173` without bucket CORS issues
+- the returned `key` is stored by the consuming system
+- delete and rename continue using the existing object endpoints
+
