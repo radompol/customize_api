@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api";
+import { createCorsPreflightResponse } from "@/lib/cors";
 import { deleteFromR2, renameR2Object } from "@/lib/r2";
 
 export const runtime = "nodejs";
@@ -19,7 +20,7 @@ export async function DELETE(request: Request) {
     const parsed = deleteObjectSchema.safeParse(body);
 
     if (!parsed.success) {
-      return apiError("Invalid delete request.", 400, parsed.error.flatten());
+      return apiError("Invalid delete request.", 400, parsed.error.flatten(), request);
     }
 
     const result = await deleteFromR2(parsed.data.key);
@@ -29,9 +30,9 @@ export async function DELETE(request: Request) {
         ...result,
         deleted: true
       }
-    });
+    }, undefined, request);
   } catch (error) {
-    return apiError("Failed to delete R2 object.", 500, error instanceof Error ? error.message : error);
+    return apiError("Failed to delete R2 object.", 500, error instanceof Error ? error.message : error, request);
   }
 }
 
@@ -41,19 +42,23 @@ export async function PUT(request: Request) {
     const parsed = renameObjectSchema.safeParse(body);
 
     if (!parsed.success) {
-      return apiError("Invalid update request.", 400, parsed.error.flatten());
+      return apiError("Invalid update request.", 400, parsed.error.flatten(), request);
     }
 
     if (parsed.data.key === parsed.data.newKey) {
-      return apiError("newKey must be different from key.");
+      return apiError("newKey must be different from key.", 400, undefined, request);
     }
 
     const result = await renameR2Object(parsed.data.key, parsed.data.newKey);
 
     return apiSuccess({
       data: result
-    });
+    }, undefined, request);
   } catch (error) {
-    return apiError("Failed to update R2 object.", 500, error instanceof Error ? error.message : error);
+    return apiError("Failed to update R2 object.", 500, error instanceof Error ? error.message : error, request);
   }
+}
+
+export function OPTIONS(request: Request) {
+  return createCorsPreflightResponse(request, ["DELETE", "PUT", "OPTIONS"]);
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api";
+import { createCorsPreflightResponse } from "@/lib/cors";
 import { buildR2ObjectKey, uploadToR2 } from "@/lib/r2";
 
 export const runtime = "nodejs";
@@ -15,7 +16,7 @@ export async function POST(request: Request) {
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
-      return apiError("File upload is required.");
+      return apiError("File upload is required.", 400, undefined, request);
     }
 
     const parsed = uploadMetadataSchema.safeParse({
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     });
 
     if (!parsed.success) {
-      return apiError("Invalid upload metadata.", 400, parsed.error.flatten());
+      return apiError("Invalid upload metadata.", 400, parsed.error.flatten(), request);
     }
 
     const objectKey = parsed.data.key ?? buildR2ObjectKey(file.name, parsed.data.folder);
@@ -41,8 +42,12 @@ export async function POST(request: Request) {
         contentType: file.type || "application/octet-stream",
         size: file.size
       }
-    });
+    }, undefined, request);
   } catch (error) {
-    return apiError("Failed to upload file to R2.", 500, error instanceof Error ? error.message : error);
+    return apiError("Failed to upload file to R2.", 500, error instanceof Error ? error.message : error, request);
   }
+}
+
+export function OPTIONS(request: Request) {
+  return createCorsPreflightResponse(request, ["POST", "OPTIONS"]);
 }

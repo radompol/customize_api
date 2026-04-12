@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api";
+import { createCorsPreflightResponse } from "@/lib/cors";
 import { buildR2ObjectKey, createSignedR2Upload } from "@/lib/r2";
 
 export const runtime = "nodejs";
@@ -18,7 +19,7 @@ export async function POST(request: Request) {
     const parsed = uploadUrlSchema.safeParse(body);
 
     if (!parsed.success) {
-      return apiError("Invalid upload request.", 400, parsed.error.flatten());
+      return apiError("Invalid upload request.", 400, parsed.error.flatten(), request);
     }
 
     const { fileName, contentType, folder, key, expiresInSeconds } = parsed.data;
@@ -37,8 +38,12 @@ export async function POST(request: Request) {
           "Content-Type": contentType
         }
       }
-    });
+    }, undefined, request);
   } catch (error) {
-    return apiError("Failed to create R2 upload URL.", 500, error instanceof Error ? error.message : error);
+    return apiError("Failed to create R2 upload URL.", 500, error instanceof Error ? error.message : error, request);
   }
+}
+
+export function OPTIONS(request: Request) {
+  return createCorsPreflightResponse(request, ["POST", "OPTIONS"]);
 }

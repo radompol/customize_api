@@ -387,7 +387,49 @@ Do not:
 - silently ignore failed delete or rename requests
 
 ================================================================================
-13. SUCCESS CRITERIA
+13. CORS REQUIREMENT
+================================================================================
+
+If a browser upload fails from another system with a message similar to:
+- network error
+- failed to fetch
+- CORS blocked
+- preflight request blocked
+
+do not assume the React app is the root cause.
+
+The most likely issue is that the external storage API is rejecting the browser's
+cross-origin request because it does not return the correct CORS headers for the
+calling origin.
+
+Example known case:
+- frontend origin: `http://localhost:5173`
+- external storage API: `https://buckets-alpha.axztechitsolutions.dev`
+
+The external storage API must allow at least:
+- `Origin: http://localhost:5173`
+- `Methods: POST, PUT, DELETE, OPTIONS`
+- `Headers: Content-Type`
+
+Expected CORS behavior:
+- preflight `OPTIONS` requests must succeed
+- the API must return `Access-Control-Allow-Origin` for the calling frontend
+- allowed methods must include upload and object-management verbs
+- allowed headers must include the headers used by the client request
+
+Important:
+- improving the frontend error message is helpful, but it does not fix the root
+  cause
+- the real fix must be applied on the external storage API or proxy layer
+- if the consuming system runs on a different domain, that domain must also be
+  added to the storage API allowlist
+
+Recommended debugging note for Codex:
+- if upload works in server-to-server calls but fails only in the browser, check
+  CORS on the external API first
+
+================================================================================
+14. SUCCESS CRITERIA
 ================================================================================
 
 The integration is correct only if:
@@ -398,4 +440,3 @@ The integration is correct only if:
 - rename calls update the key reference everywhere needed
 - response failures are surfaced clearly to users or logs
 - Cloudflare credentials remain only in the Accreditation API service
-
